@@ -1,10 +1,11 @@
 """Real 768px head/voice component diagnostic; excludes browser playback claims."""
-import asyncio,json,time,wave
+import asyncio,json,time
 from pathlib import Path
 import httpx
 import numpy as np
 from aiortc import RTCPeerConnection,RTCSessionDescription,RTCConfiguration
 from backend.storage import atomic_json
+from backend.pipeline.media import write_wav
 
 root=Path(__file__).resolve().parents[1]
 
@@ -74,9 +75,7 @@ async def run():
             values=np.concatenate(pcm);active=np.where(np.abs(values)>.001)[0]
             values=values[max(0,active[0]-4800):min(len(values),active[-1]+4800)]
             assert np.max(np.abs(values))>.1 and np.sqrt(np.mean(values**2))>.02,'Received speech is too quiet for playback'
-            with wave.open(str(output/'received-reply.wav'),'wb') as wav:
-                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(48000)
-                wav.writeframes((np.clip(values,-1,1)*32767).astype('<i2').tobytes())
+            write_wav(output/'received-reply.wav',values,48000)
             response=await client.get(f'/api/sessions/{sid}/metrics');response.raise_for_status()
             report.update(complete=True,received_resolution=[768,768],frames=len(video),audio_frames=audio_count,
                 non_silent_audio_frames=speech_count,answer_received=has_answer,audio_peak=float(np.max(np.abs(values))),

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import wave
 from pathlib import Path
 import av

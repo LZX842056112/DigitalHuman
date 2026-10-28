@@ -1,7 +1,5 @@
 """Subject-only head refinement. Body and network weights remain frozen."""
 from pathlib import Path
-import json
-import copy
 import subprocess
 import sys
 import math
@@ -97,7 +95,6 @@ def _calibrate_head(root: Path, folder: Path, renderer, steps=120,landmark_weigh
         subprocess.run([sys.executable,str(root/"scripts/track_faces.py"),"--root",str(root),"--avatar",str(folder)],check=True,cwd=root)
     tracked = read_json(tracking)
     state = renderer.state
-    params = state["parameters"]
     layer = renderer.model.renderer.smplx_model.smplx_layer
     cases = []
     alignments={}

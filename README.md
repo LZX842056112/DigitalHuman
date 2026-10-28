@@ -127,6 +127,8 @@ WebRTC 不配置外部 STUN 或 TURN。音频时钟驱动表情。播放队列�
 
 ## 验证
 
+本轮代码清理的范围、保留理由和回归结果见 [代码清理记录](docs/superpowers/plans/2026-10-28-code-cleanup.md)。
+
 ```powershell
 python -m pytest -q
 Set-Location frontend

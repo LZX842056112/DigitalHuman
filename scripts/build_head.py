@@ -13,7 +13,7 @@ from backend.avatar.lease import GpuLease
 from backend.avatar.head_assets import save_head_assets
 from backend.avatar.head_compositing import fit_similarity
 from backend.avatar.head_model import load_published_head
-from backend.avatar.head_refiner import HeadRefiner,project
+from backend.avatar.head_refiner import project
 from backend.avatar.head_reference import source_head_mask,track_reference
 from backend.avatar.lhmpp import LHMRenderer
 from backend.avatar.head_region import head_mask
