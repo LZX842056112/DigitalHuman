@@ -1,0 +1,6 @@
+torch==2.5.1+cpu
+torchaudio==2.5.1+cpu
+torchvision==0.20.1+cpu
+transformers==4.51.3
+numpy==1.26.4
+pydantic==2.10.6

@@ -1,0 +1,22 @@
+[project]
+name = "local-digital-human"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi==0.112.4", "uvicorn==0.34.2", "python-multipart==0.0.20",
+  "pydantic==2.11.4", "PyYAML==6.0.2", "numpy==1.23.5", "scipy==1.13.1",
+  "Pillow==10.4.0", "av==14.2.0", "httpx==0.28.1", "safetensors==0.5.3",
+  "opencv-python-headless==4.11.0.86", "aiortc==1.11.0"
+]
+[project.optional-dependencies]
+test = ["pytest==8.3.5", "pytest-asyncio==0.26.0"]
+asr = ["faster-whisper==1.1.1"]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+include = ["backend*", "scripts*"]
