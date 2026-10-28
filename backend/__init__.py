@@ -1,0 +1,1 @@
+"""Local digital human application."""

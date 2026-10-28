@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "code": {"repo": "https://github.com/xg-chu/GAGAvatar.git", "commit": "7abb72be5f311e7fb130c7f2e04a2d11a31420ba"},
+  "raster": {"repo": "https://github.com/xg-chu/diff-gaussian-rasterization.git", "commit": "1ebbb7cfcb907a57a9bb6bf31c5d516f922d1d17", "glm_commit": "5c46b9c07008ae65cb81ab79cd677ecc1934b903"},
+  "weights": {"repo": "xg-chu/GAGAvatar", "revision": "ddee3d79db9e783aa5496a2027b0a4b458eaf78b", "file": "assets/GAGAvatar.pt", "target": "models/gag-head/GAGAvatar.pt", "size": 747434426, "sha256": "75d449fd1d67dd7bbc613cef17f0196b1c84766935adc75d5231bc89e33950f8"},
+  "matting_config": {"repo": "facebook/mask2former-swin-tiny-coco-instance", "revision": "22c4a2f15dc88149b8b8d9f4d42c54431fbd66f6", "file": "config.json", "target": "models/gag-head/matting-config/config.json", "size": 79763, "sha256": "86e17340334de554d19f0ed176ca97ada069b72a40dfc880db6d07043e9a56ec"}
+}

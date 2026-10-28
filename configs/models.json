@@ -1,0 +1,99 @@
+{
+  "lhmpp": {
+    "repo": "aigc3d/LHM-plusplus",
+    "commit": "906b5d9fb967ab42efb92f6fa55bf22cac86b653",
+    "hf_repo": "3DAIGC/LHMPP-700M",
+    "revision": "fc9f73664b9bfcc457e96210ddc06fe7caf0d559",
+    "destination": "models/lhmpp",
+    "allow": [
+      "*.json",
+      "*.safetensors"
+    ],
+    "license": "CC-BY-NC-4.0",
+    "modelscope_repo": "Damo_XR_Lab/LHMPP-700M"
+  },
+  "prior": {
+    "hf_repo": "3DAIGC/LHMPP-Prior",
+    "destination": "models/lhmpp-prior",
+    "license": "upstream-model-assets",
+    "modelscope_repo": "Damo_XR_Lab/LHMPP-Prior",
+    "ignore": ["human_model_files/flame/FLAME_texture.npz"]
+  },
+  "a2e": {
+    "repo": "aigc3d/LAM_Audio2Expression",
+    "commit": "02a703c3ea7d8e360eb43098eca85ee98a083529",
+    "hf_repo": "3DAIGC/LAM_audio2exp",
+    "destination": "models/a2e",
+    "allow": [
+      "*.tar",
+      "*.json"
+    ],
+    "license": "upstream-model-assets",
+    "modelscope_repo": "Damo_XR_Lab/LAM_audio2exp"
+  },
+  "lam": {
+    "repo": "aigc3d/LAM",
+    "commit": "339573649dd93df4cba8093a964e85a80d1b61f3",
+    "hf_repo": "3DAIGC/LAM-assets",
+    "destination": "models/lam-assets",
+    "license": "upstream-model-assets",
+    "modelscope_repo": "Damo_XR_Lab/LAM-assets"
+  },
+  "gaga_track": {
+    "repo": "xg-chu/GAGAvatar_track",
+    "commit": "76fdabf901cff2552dd0b9b1c7b6b36257309b7d"
+  },
+  "tracker": {
+    "repo": "aigc3d/LHM_Track",
+    "commit": "9537db621e1e3ba381e6b4e8aaf1b29255169ac2"
+  },
+  "gpt_sovits": {
+    "repo": "RVC-Boss/GPT-SoVITS",
+    "commit": "b4570b876f5c086819ba84e3215472733c6a7b70",
+    "hf_repo": "lj1995/GPT-SoVITS",
+    "destination": "models/gpt-sovits",
+    "allow": [
+      "v2Pro/s2Gv2ProPlus.pth",
+      "sv/pretrained_eres2netv2w24s4ep4.ckpt",
+      "s1v3.ckpt",
+      "chinese-roberta-wwm-ext-large/*",
+      "chinese-hubert-base/*",
+      "fast_langdetect/*"
+    ],
+    "license": "upstream-model-assets",
+    "modelscope_repo": "XXXXRT/GPT-SoVITS-Pretrained",
+    "modelscope_prefix": "pretrained_models/"
+  },
+  "voice_text_assets": {
+    "modelscope_repo": "XXXXRT/GPT-SoVITS-Pretrained",
+    "destination": "models/voice-text",
+    "allow": ["G2PWModel.zip", "nltk_data.zip"],
+    "license": "upstream-model-assets"
+  },
+  "llm": {
+    "hf_repo": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+    "destination": "models/llm",
+    "allow": [
+      "*q4_k_m.gguf"
+    ],
+    "license": "qwen-research",
+    "modelscope_repo": "Qwen/Qwen2.5-3B-Instruct-GGUF"
+  },
+  "asr": {
+    "hf_repo": "Systran/faster-whisper-small",
+    "destination": "models/asr/small",
+    "license": "MIT",
+    "modelscope_repo": "pengzhendong/faster-whisper-small"
+  },
+  "wav2vec": {
+    "hf_repo": "facebook/wav2vec2-base-960h",
+    "destination": "models/wav2vec2",
+    "allow": [
+      "*.json",
+      "*.bin",
+      "*.safetensors"
+    ],
+    "license": "apache-2.0",
+    "modelscope_repo": "AI-ModelScope/wav2vec2-base-960h"
+  }
+}

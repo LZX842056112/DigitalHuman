@@ -1,0 +1,13 @@
+name: 灰色卫衣数字人
+source_directory: data/raw/subject
+video: 1075_0b5.mp4
+body_reference: psc.png
+body_photos: [psc.png]
+face_photos: ["psc (1).png", "psc (2).jpg"]
+appearance: 灰色卫衣、黑色长裤、斜挎包
+estimated_regions: [背面, 遮挡的手部, 服装遮挡的身体表面]
+reference_audio:
+  start_seconds: null
+  duration_seconds: 6
+  text: ""
+  confirmed: false

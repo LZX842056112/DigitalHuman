@@ -1,0 +1,29 @@
+host: 127.0.0.1
+port: 7860
+render:
+  width: 512
+  height: 512
+  fps: 16
+  batch_size: 1
+  device: cuda
+  compile_neural: false
+  raster_tile_size: 8
+  background: [0.96, 0.96, 0.96]
+dialogue:
+  base_url: http://127.0.0.1:8081/v1
+  model: qwen2.5-3b-instruct
+  max_tokens: 128
+  context_turns: 6
+voice:
+  base_url: http://127.0.0.1:9880
+  device: cpu
+  language: zh
+asr:
+  model: models/asr/small
+  device: cpu
+  compute_type: int8
+runtime:
+  distro: DigitalHuman
+  disk_reserve_gib: 10
+  gpu_build_free_mib: 7000
+  idle_timeout_seconds: 900
