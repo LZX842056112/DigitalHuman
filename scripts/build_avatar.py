@@ -16,7 +16,6 @@ def main():
     avatar_id = args.avatar_id or (default.read_text().strip() if default.exists() else None)
     if not avatar_id:
         subject = yaml.safe_load((root/'configs/subject.yaml').read_text(encoding='utf-8'))
-        from scripts.common_paths import linux_path
         source = root/subject['source_directory']
         avatar = store.import_files(subject.get('name','数字人'),source/subject['video'],
                    [source/p for p in subject['body_photos']], [source/p for p in subject['face_photos']])

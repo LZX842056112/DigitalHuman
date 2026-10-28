@@ -68,13 +68,16 @@ def save_state(folder: Path, state):
                 'tensor_file':relative, 'tensor_sha256':sha256(target)})
 
 
-def state_artifacts(folder):
-    schema = read_json(folder/'state.json')
+def _tensor_file(folder, schema):
     name = schema.get('tensor_file','state.safetensors')
     path = (folder/name).resolve()
     if folder.resolve() not in path.parents:
         raise ValueError('人物张量路径越界')
-    return ['state.json',name]
+    return name
+
+
+def state_artifacts(folder):
+    return ['state.json', _tensor_file(folder, read_json(folder/'state.json'))]
 
 
 def load_state(folder: Path, device="cpu"):
@@ -82,7 +85,7 @@ def load_state(folder: Path, device="cpu"):
     schema = read_json(folder / "state.json")
     if schema.get("schema_version") not in {1,2}:
         raise ValueError("人物状态版本不受支持")
-    name = state_artifacts(folder)[1]
+    name = _tensor_file(folder, schema)
     if schema.get('tensor_sha256') and sha256(folder/name) != schema['tensor_sha256']:
         raise ValueError('人物张量文件校验失败')
     tensors = load_file(str(folder/name), device=device)

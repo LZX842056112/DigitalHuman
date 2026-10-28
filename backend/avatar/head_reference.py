@@ -9,7 +9,6 @@ import torch
 def source_head_mask(tracked,flame):
     import cv2
     from backend.avatar.head_refiner import project
-    import torch.nn.functional as F
     shape=tracked['shapecode'][None].cuda();eye=torch.zeros(1,6,device='cuda')
     _,lmks=flame(shape,tracked['expcode'][None].cuda(),tracked['posecode'][None].cuda(),eye)
     transform=tracked['transform_matrix'].cuda()

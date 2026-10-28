@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import io
 import time
 import traceback
 from pathlib import Path
 import numpy as np
-import httpx
 from PIL import Image
 
 from backend.errors import PipelineError
@@ -30,17 +28,6 @@ def body_checkpoint_matches(folder,signature):
     if not path.is_file() or not (folder/'state.json').is_file(): return False
     checkpoint=read_json(path)
     return checkpoint.get('signature')==signature and checkpoint.get('state_descriptor_sha256')==sha256(folder/'state.json')
-
-
-def release(renderer):
-    del renderer
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        pass
 
 
 def build_avatar(store, avatar_id, job_id, stage='all'):
@@ -242,11 +229,8 @@ async def validate_voice(root, folder, manifest):
     start = time.perf_counter()
     pcm, rate = await VoiceClient(config['voice']['base_url']).synthesize(text, folder, manifest['voice'])
     write_wav(folder/'voice/validation.wav', pcm, rate)
-    async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
-        response = await client.post('http://127.0.0.1:9881/expression', content=(folder/'voice/validation.wav').read_bytes())
-        response.raise_for_status()
-    with np.load(io.BytesIO(response.content), allow_pickle=False) as data:
-        weights = data['weights']
+    from backend.avatar.a2e_client import request_weights
+    weights = await request_weights((folder/'voice/validation.wav').read_bytes(), timeout=300)
     ExpressionMap.load(folder/'expression_map.npz').apply(weights)
     if len(weights) < 2 or np.ptp(weights) < .001:
         raise PipelineError('a2e', '音频未产生有效表情序列')

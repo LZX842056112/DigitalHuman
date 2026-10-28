@@ -16,7 +16,6 @@ class AvatarVideoTrack(MediaStreamTrack):
         self.session = session
         self.fps = fps
         self.start = None
-        self.frames = 0
         self._pending=asyncio.Queue(maxsize=1)
         self._producer=None
         self._failure=None
@@ -65,7 +64,6 @@ class AvatarVideoTrack(MediaStreamTrack):
                     self.session.video_frames_dropped=getattr(self.session,'video_frames_dropped',0)+1
                 self._pending.put_nowait(frame)
                 self.session.video_queue_depth=self._pending.qsize()
-                self.frames+=1
                 # Preserve cadence after a short delay. Limit recovery to one frame.
                 next_frame=max(next_frame+1/self.fps,time.monotonic()-1/self.fps)
         except asyncio.CancelledError:

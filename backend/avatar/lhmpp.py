@@ -76,6 +76,15 @@ def load_model(root: Path):
                                   config['neural_renderer']['type'])
     finally:
         Dinov2Wrapper._build_dinov2 = staticmethod(original)
+    if config.get('encoder_type') == 'dinov2':
+        # PyTorch 2.3 cannot trace the missing encoder.patch_size lookup inside
+        # upstream's try/except. Run reconstruction's latent control flow eagerly.
+        # The encoder and runtime renderer retain their own optimizations.
+        # Disable the unbound function, then bind it: Dynamo's unwrapping drops
+        # the bound instance from an already-compiled method in this version.
+        model.forward_latent_points = torch._dynamo.disable(
+            type(model).forward_latent_points
+        ).__get__(model, type(model))
     model.eval()
     model.requires_grad_(False)
     return model
@@ -109,7 +118,7 @@ def fit_body_shape(estimator, image):
 def reconstruct(root: Path, folder: Path, manifest):
     import torch
     configure_upstream(root)
-    free, total = torch.cuda.mem_get_info() if torch.cuda.is_available() else (0, 0)
+    free, _ = torch.cuda.mem_get_info() if torch.cuda.is_available() else (0, 0)
     if free < 7000 * 1024**2:
         raise PipelineError("gpu_memory", f"重建需要约7GB可用显存。当前可用 {free // 1024**2} MiB。请释放其他程序的显存后重试。")
     from engine.pose_estimation import pose_estimator as pose_module

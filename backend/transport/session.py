@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import math
 import re
@@ -9,11 +8,9 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-import httpx
-from scipy.signal import resample_poly
-from math import gcd
 
 from backend.avatar.expressions import ExpressionMap
+from backend.avatar.a2e_client import request_weights
 from backend.dialogue.client import Dialogue
 from backend.voice.client import VoiceClient
 from backend.transport.timeline import Timeline
@@ -151,12 +148,8 @@ class Session:
                     return
                 path = self.folder / f"{token}_{index}.wav"
                 write_wav(path, pcm, rate)
-                async with httpx.AsyncClient(timeout=180, trust_env=False) as client:
-                    response = await client.post("http://127.0.0.1:9881/expression", content=path.read_bytes(),
-                                                 headers={"Content-Type": "audio/wav"})
-                    response.raise_for_status()
-                with np.load(io.BytesIO(response.content), allow_pickle=False) as data:
-                    expressions, jaws = self.mapping.apply(data["weights"])
+                weights = await request_weights(path.read_bytes(), timeout=180, headers={"Content-Type": "audio/wav"})
+                expressions, jaws = self.mapping.apply(weights)
                 while self.timeline.current(token):
                     try:
                         self.timeline.append(token, pcm, rate, expressions, jaws)

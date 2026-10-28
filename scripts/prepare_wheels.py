@@ -12,7 +12,7 @@ try:
 except ImportError:
     from pip._vendor.packaging.tags import sys_tags
     from pip._vendor.packaging.utils import parse_wheel_filename
-from scripts.download_modelscope import fetch_file
+from scripts.fetch_artifact import fetch_file
 
 
 def prepare(root, requirements):

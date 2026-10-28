@@ -13,8 +13,6 @@ outputs/*
 work/
 .superpowers/
 __pycache__/
-.pytest_cache/
-.pytest-tmp*/
 *.egg-info/
 frontend/node_modules/
 frontend/dist/

@@ -2,67 +2,17 @@
 import argparse
 import fnmatch
 import json
-import os
 import shutil
 import urllib.request
 import urllib.parse
-import time
-import http.client
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from backend.storage import sha256, atomic_json
-from scripts.download_models import safe_extract, is_asset_archive
-
-
-def fetch_file(url, destination: Path, digest, size):
-    if size>=8*1024**2 and urllib.parse.urlparse(url).scheme in {'http','https'}:
-        from scripts.download_parallel import fetch_parallel
-        return fetch_parallel(url,destination,digest,size,workers=12)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() and destination.stat().st_size == size and sha256(destination) == digest:
-        return
-    partial = destination.with_name(destination.name + ".partial")
-    if partial.exists() and partial.stat().st_size >= size:
-        if partial.stat().st_size == size and sha256(partial) == digest:
-            os.replace(partial, destination)
-            return
-        partial.unlink()
-    while not partial.exists() or partial.stat().st_size < size:
-        for attempt in range(5):
-            before = partial.stat().st_size if partial.exists() else 0
-            try:
-                _transfer(url, partial, size)
-                break
-            except (OSError, TimeoutError, http.client.HTTPException) as exc:
-                if attempt == 4:
-                    raise
-                print(f"Resume {destination.name}: {exc}", flush=True)
-                time.sleep(min(2 ** attempt, 15))
-        after = partial.stat().st_size
-        if after <= before:
-            raise OSError(f"Download made no progress: {destination}")
-        if after // (64*1024**2) > before // (64*1024**2):
-            print(f"{destination.name}: {after}/{size}", flush=True)
-    if sha256(partial) != digest:
-        partial.unlink()
-        raise ValueError(f"SHA-256 mismatch: {destination.name}")
-    os.replace(partial, destination)
-    print(f"Verified {destination.name}: {size} bytes", flush=True)
-
-
-def _transfer(url, partial, size):
-    offset = partial.stat().st_size if partial.exists() else 0
-    headers = {"User-Agent": "DigitalHuman/0.1"}
-    end = min(offset + 1024**2, size) - 1
-    headers["Range"] = f"bytes={offset}-{end}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=90) as response:
-        append = offset > 0 and response.status == 206
-        if offset and response.status not in {206, None}:
-            raise OSError("Server ignored the resume range")
-        if append and not response.headers.get("Content-Range", "").startswith(f"bytes {offset}-"):
-            raise ValueError("Server returned an inconsistent resume range")
-        with partial.open("ab" if append else "wb") as output:
-            shutil.copyfileobj(response, output, length=64*1024)
+from backend.storage import atomic_json
+from scripts.fetch_artifact import fetch_file as fetch_file
+# Keep historical helper imports available to existing callers.
+from scripts.model_archives import (
+    extract_archives, safe_extract as safe_extract, is_asset_archive as is_asset_archive,
+)
 
 
 def list_files(repo):
@@ -122,13 +72,7 @@ def download(root: Path, selected=None, list_only=False):
         lock[key] = {"repo":repo,"provider":"modelscope","revision":{r["Path"]:r["Revision"] for r in rows},
                      "files":files,"license":item.get("license")}
         atomic_json(lock_path,lock)
-        for name,digest in files.items():
-            path = destination/name
-            if is_asset_archive(path):
-                marker=path.with_name(path.name+".extracted")
-                if not marker.exists():
-                    safe_extract(path,destination)
-                    marker.write_text(digest,encoding="ascii")
+        extract_archives(destination, files)
     return lock
 
 

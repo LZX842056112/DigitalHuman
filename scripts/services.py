@@ -6,7 +6,6 @@ import os
 import signal
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -39,7 +38,7 @@ def service_plan(root, studio_only=False):
         'vits_weights_path':pretrained/'v2Pro/s2Gv2ProPlus.pth',
         'bert_base_path':pretrained/'chinese-roberta-wwm-ext-large',
         'cnhuhbert_base_path':pretrained/'chinese-hubert-base'}
-    for name,path in files.items():
+    for path in files.values():
         if not path.exists(): raise FileNotFoundError(f'声音模型缺失: {path}')
     voice_config=root/'.runtime/tts.yaml'
     voice_config.write_text(yaml.safe_dump({'custom':{**{k:str(v) for k,v in files.items()},'device':'cpu','is_half':False,'version':'v2ProPlus'}}),encoding='utf-8')
