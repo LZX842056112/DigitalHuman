@@ -10,6 +10,7 @@ from backend.storage import Store,read_json,sha256
 from backend.photo_profiles import migrate_profile,source_path
 from backend.model_jobs import expired,sentence_paths
 from backend.errors import NotReady
+from backend.portrait.assets import portrait_version
 from backend.portrait.engine import PhotoEngine
 
 ROOT=project_root();store=Store(ROOT);engine=PhotoEngine(ROOT);lock=threading.Lock()
@@ -49,9 +50,9 @@ def prepare(body:PrepareRequest):
     with lock:
         try:
             manifest,folder,photo=profile(body.avatar_id)
-            catalog=read_json(ROOT/'configs/photo-models.json')
-            identity={'photo':sha256(photo),'model':catalog['models']['ditto']['revision'],
-                      'code':catalog['sources']['ditto']['commit'],'size':1024}
+            version=portrait_version(ROOT)
+            identity={'photo':sha256(photo),'model':version['model_revision'],
+                      'code':version['code_commit'],'size':version['max_size']}
             key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:24]
             relative='portrait/'+key
             report=engine.prepare(photo,folder/relative)

@@ -6,6 +6,7 @@ import shutil
 import uuid
 from backend.storage import sha256, read_json
 from backend.errors import NotReady
+from backend.portrait.assets import portrait_version
 
 
 def source_path(folder, relative):
@@ -97,10 +98,8 @@ def portrait_artifacts(folder, manifest, *, root):
         raise ValueError('照片缓存文件校验失败')
     ready=read_json(source_path(cache,'ready.json'))
     metadata=descriptor['metadata']
-    catalog=read_json(Path(root)/'configs/photo-models.json')
     expected={'photo_sha256':manifest['sources'][manifest['photo']],
-        'model_revision':catalog['models']['ditto']['revision'],
-        'code_commit':catalog['sources']['ditto']['commit'],'max_size':1024}
+        **portrait_version(Path(root))}
     if (metadata!=expected
             or ready['metadata']!=metadata or descriptor['schema_version']!=1):
         raise ValueError('照片缓存与当前照片或模型版本不一致')

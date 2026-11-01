@@ -25,21 +25,31 @@ def alive(record):
     return identity(record['pid'])==record.get('start_ticks') and record.get('start_ticks') is not None
 
 
+def _worker_services(root):
+    return [dict(name=name,port=port,cwd=root,command=[
+        f'/opt/digitalhuman/{environment}/bin/python','-m','uvicorn',module,
+        '--host','127.0.0.1','--port',str(port)],health=health)
+        for name,environment,module,port,health in [
+            ('voice','emotional-voice','backend.voice.service:app',9880,'/health'),
+            ('portrait','portrait','backend.portrait.service:app',9881,'/health'),
+            ('studio','portrait','backend.api.app:app',7860,'/api/health')]]
+
+
+def _dialogue_command(model):
+    return ['/opt/digitalhuman/llama.cpp/build/bin/llama-server','-m',str(model),
+        '--host','127.0.0.1','--port','8081','-ngl','0','-t','6','-c','4096',
+        '--alias','qwen2.5-3b-instruct']
+
+
 def service_plan(root, studio_only=False):
-    portrait='/opt/digitalhuman/portrait/bin/python'
-    voice='/opt/digitalhuman/emotional-voice/bin/python'
-    services=[dict(name='studio',port=7860,cwd=root,command=[portrait,'-m','uvicorn','backend.api.app:app','--host','127.0.0.1','--port','7860'],health='/api/health')]
+    workers=_worker_services(root)
     if studio_only:
-        return services
+        return [item for item in workers if item['name']=='studio']
     ggufs=list((root/'models/llm').glob('*q4_k_m.gguf'))
     if len(ggufs)!=1: raise FileNotFoundError('需要一个 Qwen2.5-3B Q4_K_M 模型')
-    llama=Path('/opt/digitalhuman/llama.cpp/build/bin/llama-server')
-    if not llama.is_file(): raise FileNotFoundError('llama-server 尚未编译')
-    services=[
-        dict(name='dialogue',port=8081,cwd=root,command=[str(llama),'-m',str(ggufs[0]),'--host','127.0.0.1','--port','8081','-ngl','0','-t','6','-c','4096','--alias','qwen2.5-3b-instruct'],health='/health'),
-        dict(name='voice',port=9880,cwd=root,command=[voice,'-m','uvicorn','backend.voice.service:app','--host','127.0.0.1','--port','9880'],health='/health'),
-        dict(name='portrait',port=9881,cwd=root,command=[portrait,'-m','uvicorn','backend.portrait.service:app','--host','127.0.0.1','--port','9881'],health='/health'),
-        *services]
+    command=_dialogue_command(ggufs[0])
+    if not Path(command[0]).is_file(): raise FileNotFoundError('llama-server 尚未编译')
+    services=[dict(name='dialogue',port=8081,cwd=root,command=command,health='/health'),*workers]
     for item in services:
         if not Path(item['command'][0]).is_file(): raise FileNotFoundError(item['command'][0])
     return services
@@ -53,14 +63,9 @@ def start(root, studio_only=False):
     plan=service_plan(root,studio_only)
     expected={item['name']:item['command'] for item in plan}
     if studio_only:
-        for name,environment,module,port in [
-                ('voice','emotional-voice','backend.voice.service:app','9880'),
-                ('portrait','portrait','backend.portrait.service:app','9881')]:
-            expected[name]=[f'/opt/digitalhuman/{environment}/bin/python','-m','uvicorn',module,
-                            '--host','127.0.0.1','--port',port]
-        expected['dialogue']=['/opt/digitalhuman/llama.cpp/build/bin/llama-server','-m',
-            str(root/'models/llm/qwen2.5-3b-instruct-q4_k_m.gguf'),'--host','127.0.0.1',
-            '--port','8081','-ngl','0','-t','6','-c','4096','--alias','qwen2.5-3b-instruct']
+        expected.update({item['name']:item['command'] for item in _worker_services(root)
+                         if item['name']!='studio'})
+        expected['dialogue']=_dialogue_command(root/'models/llm/qwen2.5-3b-instruct-q4_k_m.gguf')
     for name,record in records.items():
         if alive(record) and (name not in expected or record.get('command')!=expected[name]):
             raise RuntimeError(f'{name} 仍在运行旧配置。请先运行 scripts/stop.ps1，再运行 scripts/start.ps1。')

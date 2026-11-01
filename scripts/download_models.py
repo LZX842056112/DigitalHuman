@@ -6,9 +6,6 @@ from scripts import photo_assets
 
 def download(root: Path, selected=None):
     catalog=photo_assets.load_catalog(root)
-    if selected is not None:
-        unknown=set(selected)-catalog['models'].keys()
-        if unknown:raise ValueError('未知照片模型：'+', '.join(sorted(unknown)))
     photo_assets.fetch_models(root,catalog,selected=selected)
     return {key:value for key,value in catalog['models'].items() if selected is None or key in selected}
 
