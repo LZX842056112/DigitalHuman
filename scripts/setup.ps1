@@ -21,5 +21,4 @@ $arguments = @()
 if ($EnvironmentOnly) { $arguments += '--environment-only' }
 if ($SkipModels) { $arguments += '--skip-models' }
 Invoke-ProjectWSL 'setup_linux.sh' $arguments
-if (-not $EnvironmentOnly -and -not $SkipModels) { Invoke-ProjectWSL 'setup_head.sh' @() }
 @{ distro=$Distro; installed=(Get-Date -Format o); environment_only=[bool]$EnvironmentOnly } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runtime 'setup-state.json') -Encoding UTF8

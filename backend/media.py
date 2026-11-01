@@ -1,0 +1,61 @@
+"""Audio-track ingestion. Video frames never enter the photo animation path."""
+import wave
+from pathlib import Path
+import av
+import numpy as np
+from backend.errors import PipelineError
+from backend.storage import sha256
+from backend.photo_profiles import migrate_profile, source_path
+
+
+def read_audio(path, rate=16000):
+    chunks=[];resampler=av.AudioResampler(format='fltp',layout='mono',rate=rate)
+    with av.open(str(path)) as container:
+        if not container.streams.audio:raise PipelineError('audio','视频中没有音轨')
+        for frame in container.decode(audio=0):
+            chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(frame))
+        chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(None))
+    if not chunks:raise PipelineError('audio','音轨无法解码')
+    return np.concatenate(chunks).astype(np.float32),rate
+
+
+def write_wav(path, pcm, rate):
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    with wave.open(str(path),'wb') as output:
+        output.setnchannels(1);output.setsampwidth(2);output.setframerate(rate)
+        output.writeframes((np.clip(pcm,-1,1)*32767).astype('<i2').tobytes())
+
+
+def choose_reference(pcm, rate, duration=6):
+    if len(pcm)<rate*duration:raise PipelineError('audio','需要至少六秒清晰语音')
+    best=None
+    for start in np.arange(0,len(pcm)/rate-duration+.01,.5):
+        segment=pcm[int(start*rate):int((start+duration)*rate)]
+        frames=segment[:len(segment)//320*320].reshape(-1,320)
+        rms=np.sqrt(np.mean(frames**2,axis=1)+1e-12)
+        active=float(np.mean(rms>.008));clipped=float(np.mean(np.abs(segment)>.98))
+        score=active-clipped*5-abs(float(np.median(rms))-.1)*.1
+        if active>.55 and clipped<.01 and (best is None or score>best[0]):best=(score,float(start))
+    if best is None:raise PipelineError('audio','未找到清晰参考语音，请更换声音视频')
+    return best[1],duration
+
+
+def prepare_voice(store, avatar_id):
+    manifest=migrate_profile(store.manifest(avatar_id));folder=store.avatar_dir(avatar_id)
+    video=source_path(folder,manifest['voice_video']);digest=sha256(video)
+    if digest!=manifest['sources'][manifest['voice_video']]:raise ValueError('声音来源校验失败')
+    target=folder/'voice/reference.wav';voice=manifest['voice']
+    if (voice.get('source_sha256')==digest and target.is_file()
+            and voice.get('reference_sha256')==sha256(target)):return manifest
+    previous_hash=sha256(target) if target.is_file() else None
+    pcm,rate=read_audio(video);start,duration=choose_reference(pcm,rate)
+    write_wav(target,pcm[int(start*rate):int((start+duration)*rate)],rate)
+    # A legacy confirmation is retained only if the extracted waveform matches.
+    confirmed=(bool(voice.get('confirmed')) and previous_hash==sha256(target)
+               and voice.get('start_seconds')==start and voice.get('duration_seconds')==duration)
+    manifest['voice']={key:value for key,value in voice.items() if key not in {'text','transcription_error'}}
+    manifest['voice'].update(confirmed=confirmed,reference='voice/reference.wav',source_sha256=digest,
+        reference_sha256=sha256(target),start_seconds=start,duration_seconds=duration,sample_rate=rate)
+    manifest['validation']['voice']=False
+    store.write_manifest(avatar_id,manifest)
+    return manifest

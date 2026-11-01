@@ -1,8 +1,10 @@
 import io
+import asyncio
 import wave
 import httpx
 import numpy as np
 from backend.errors import NotReady
+from backend.emotion import normalize_emotion
 
 
 def normalize_speech(pcm, target_rms=.1, peak_limit=.891):
@@ -24,16 +26,15 @@ class VoiceClient:
     def __init__(self, base_url="http://127.0.0.1:9880"):
         self.base_url = base_url
 
-    async def synthesize(self, text, avatar_dir, profile):
-        if not profile.get("confirmed") or not profile.get("text", "").strip():
-            raise NotReady("请先试听参考录音并核对文字")
-        request = {"text": text, "text_lang": "zh", "ref_audio_path": str(avatar_dir / "voice/reference.wav"),
-                   "prompt_lang": profile.get("language", "zh"), "prompt_text": profile["text"],
-                   "media_type": "wav", "streaming_mode": False, "batch_size": 1,
-                   "text_split_method": "cut5", "speed_factor": 1.0}
-        async with httpx.AsyncClient(timeout=180, trust_env=False) as client:
+    async def synthesize(self, text, avatar_dir, profile, *, emotion='neutral', session_id=None, generation=None):
+        if not profile.get("confirmed"):
+            raise NotReady("请先试听并确认参考声音")
+        request = {"text": text, "avatar_id": avatar_dir.name,"emotion":normalize_emotion(emotion)}
+        if session_id is not None:request.update(session_id=session_id,generation=generation)
+        client = await asyncio.to_thread(httpx.AsyncClient, timeout=600, trust_env=False)
+        async with client:
             response = await client.post(f"{self.base_url}/tts", json=request)
-            response.raise_for_status()
+            if response.is_error:raise RuntimeError('声音服务：'+response.text[:500])
         with wave.open(io.BytesIO(response.content)) as wav:
             if wav.getsampwidth() != 2:
                 raise RuntimeError("声音服务未返回16位PCM")
