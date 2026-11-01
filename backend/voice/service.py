@@ -1,11 +1,10 @@
 """Private local emotional voice worker; references are resolved by profile ID."""
 import io
 import threading
-import wave
 from fastapi import FastAPI,HTTPException
 from fastapi.responses import Response,JSONResponse
 from pydantic import BaseModel,Field
-import numpy as np
+from backend.media import write_wav_stream
 from backend.config import project_root
 from backend.errors import NotReady
 from backend.model_jobs import expired
@@ -47,9 +46,7 @@ def tts(body:VoiceRequest):
             pcm,rate,report=engine.synthesize(body.text,reference,body.emotion,folder/'voice',cancelled)
             if cancelled():raise InterruptedError('当前回答已停止')
             output=io.BytesIO()
-            with wave.open(output,'wb') as wav:
-                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(rate)
-                wav.writeframes((np.clip(pcm,-1,1)*32767).astype('<i2').tobytes())
+            write_wav_stream(output,pcm,rate)
             return Response(output.getvalue(),media_type='audio/wav',headers={
                 'X-Generation-Seconds':str(report['generation_seconds']),
                 'X-Peak-VRAM-MiB':str(report['peak_vram_mib'])})

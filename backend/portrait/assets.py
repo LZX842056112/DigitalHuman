@@ -15,6 +15,13 @@ def read_published_config(path):
     with open(path,'rb') as stream:return _ConfigReader(stream).load()
 
 
+def portrait_version(root):
+    """Return the shared identity of the pinned photo inference cache."""
+    catalog=read_json(root/'configs/photo-models.json')
+    return {'model_revision':catalog['models']['ditto']['revision'],
+            'code_commit':catalog['sources']['ditto']['commit'],'max_size':1024}
+
+
 def verified_model(root,key):
     model=read_json(root/'configs/photo-models.json')['models'][key]
     folder=root/model['destination']

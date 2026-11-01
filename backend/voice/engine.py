@@ -3,7 +3,6 @@ import gc
 import hashlib
 import io
 import sys
-import time
 from backend import clock
 from contextlib import contextmanager
 from pathlib import Path

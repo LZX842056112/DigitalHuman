@@ -19,11 +19,16 @@ def read_audio(path, rate=16000):
     return np.concatenate(chunks).astype(np.float32),rate
 
 
-def write_wav(path, pcm, rate):
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    with wave.open(str(path),'wb') as output:
+def write_wav_stream(target, pcm, rate):
+    """Write mono PCM16 WAV to a filename or binary stream."""
+    with wave.open(target,'wb') as output:
         output.setnchannels(1);output.setsampwidth(2);output.setframerate(rate)
         output.writeframes((np.clip(pcm,-1,1)*32767).astype('<i2').tobytes())
+
+
+def write_wav(path, pcm, rate):
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    write_wav_stream(str(path),pcm,rate)
 
 
 def choose_reference(pcm, rate, duration=6):

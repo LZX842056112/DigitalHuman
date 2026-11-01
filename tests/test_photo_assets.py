@@ -21,7 +21,6 @@ def test_photo_source_inventory_rejects_a_changed_commit(tmp_path):
     from scripts.photo_assets import check_source_lock
     folder=tmp_path/'source';folder.mkdir()
     (folder/'.source-lock.json').write_text(json.dumps({'commit':'different'}))
-    import pytest
     with pytest.raises(ValueError,match='版本'):
         check_source_lock(folder,'a'*40)
 

@@ -4,7 +4,6 @@ import gc
 import math
 import os
 import sys
-import time
 from backend import clock
 import uuid
 from pathlib import Path
@@ -16,7 +15,7 @@ from backend.emotion import portrait_emotion
 from backend.gpu import gpu_operation
 from backend.media import read_audio
 from backend.storage import read_json,sha256,atomic_json
-from backend.portrait.assets import read_published_config,verified_model
+from backend.portrait.assets import portrait_version,read_published_config,verified_model
 from backend.portrait.cache import save_cache,load_cache
 
 
@@ -63,9 +62,7 @@ class PhotoEngine:
         info=self.registrar.source2info
         self.networks=[info.appearance_extractor.model,info.motion_extractor.model,self.audio2motion.lmdm.model,
                        self.stitch.stitch_net.model,self.warp.warp_net.model,self.decoder.decoder.model]
-        catalog=read_json(self.root/'configs/photo-models.json')
-        self.version={'model_revision':catalog['models']['ditto']['revision'],
-                      'code_commit':catalog['sources']['ditto']['commit'],'max_size':1024}
+        self.version=portrait_version(self.root)
         self.loaded=True
 
     def _activate(self):

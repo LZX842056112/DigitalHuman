@@ -1,5 +1,4 @@
 """A photo's appearance cache contains arrays, never executable objects."""
-import os
 import uuid
 import numpy as np
 from backend.storage import atomic_json,read_json,sha256
