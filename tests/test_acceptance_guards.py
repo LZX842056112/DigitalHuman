@@ -6,6 +6,7 @@ concurrent consumers, timers and report persistence run unchanged.
 import asyncio
 import json
 import time
+from backend import clock
 from types import SimpleNamespace
 
 import httpx
@@ -25,6 +26,7 @@ class LocalMedia:
         self.speaking = False
         self.tasks = []
         self.callbacks = {}
+        self.closed = self.deleted = False
         self.localDescription = SimpleNamespace(sdp='test offer')
         self.readyState = 'open'
 
@@ -49,7 +51,7 @@ class LocalMedia:
 
     async def setRemoteDescription(self, _):
         await asyncio.sleep(self.prepare_delay)
-        self.media_started = time.monotonic()
+        self.media_started = clock.monotonic()
         for kind in ('video', 'audio'):
             self.callbacks['track'](LocalTrack(self, kind))
 
@@ -69,6 +71,7 @@ class LocalMedia:
 
     async def close(self):
         await asyncio.gather(*self.tasks)
+        self.closed = True
 
 
 class LocalTrack:
@@ -92,13 +95,14 @@ def install_local_io(monkeypatch, media):
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def post(self, path, **kwargs):
-            payload = ({'session_id': 'test', 'camera': {'yaw': 0}} if path == '/api/sessions'
+            payload = ({'session_id': 'test', 'width':512,'height':512,'fps':25} if path == '/api/sessions'
                        else {'sdp': 'answer', 'type': 'answer'})
             return httpx.Response(200, json=payload, request=httpx.Request('POST', 'http://test'+path))
         async def get(self, path, **kwargs):
             return httpx.Response(503 if media.metrics_failure else 200, json={'queue_depth': 0},
                                   request=httpx.Request('GET', 'http://test'+path))
         async def delete(self, path):
+            media.deleted = True
             return httpx.Response(204, request=httpx.Request('DELETE', 'http://test'+path))
     monkeypatch.setattr(acceptance.httpx, 'AsyncClient', lambda **kwargs: Client())
     monkeypatch.setattr(acceptance, 'RTCPeerConnection', lambda **kwargs: media)
@@ -129,8 +133,92 @@ async def test_acceptance_duration_excludes_preparation(tmp_path, monkeypatch):
     media = LocalMedia(prepare_delay=1)
     install_local_io(monkeypatch, media)
     await acceptance.run(tmp_path, 'avatar', minutes=.05, rounds=0)
-    received_seconds = time.monotonic()-media.media_started
+    received_seconds = clock.monotonic()-media.media_started
     assert received_seconds >= 3, 'Model loading and negotiation must not shorten the media test'
     report = read_report(tmp_path)
     assert report['media_elapsed_seconds'] >= 3
     assert report['preparation_seconds'] >= 1
+
+
+async def test_acceptance_saving_frame_evidence_does_not_block_media_loop(tmp_path, monkeypatch):
+    install_local_io(monkeypatch, LocalMedia())
+    original_save = Image.Image.save
+
+    def slow_disk(image, path, *args, **kwargs):
+        time.sleep(.25)
+        return original_save(image, path, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, 'save', slow_disk)
+    stamps = []
+
+    async def heartbeat():
+        while True:
+            stamps.append(clock.monotonic())
+            await asyncio.sleep(.005)
+
+    pulse = asyncio.create_task(heartbeat())
+    try:
+        await acceptance.run(tmp_path, 'avatar', minutes=.05, rounds=0)
+    finally:
+        pulse.cancel()
+        await asyncio.gather(pulse, return_exceptions=True)
+    largest_pause = max(b-a for a, b in zip(stamps, stamps[1:]))
+    assert largest_pause < .12, 'Evidence PNG writes must not stop WebRTC packet processing'
+    folder = next((tmp_path/'outputs/acceptance').iterdir())
+    assert (folder/'frame_00001.png').is_file()
+    assert (folder/'frame_00100.png').is_file()
+
+
+async def test_acceptance_rejects_failed_frame_evidence_write(tmp_path, monkeypatch):
+    install_local_io(monkeypatch, LocalMedia())
+
+    def disk_error(*args, **kwargs):
+        raise OSError('evidence disk full')
+
+    monkeypatch.setattr(Image.Image, 'save', disk_error)
+    with pytest.raises(RuntimeError, match='evidence disk full'):
+        await acceptance.run(tmp_path, 'avatar', minutes=.05, rounds=0)
+    assert read_report(tmp_path)['status'] == 'failed'
+
+
+async def test_acceptance_report_writes_do_not_block_media_loop(tmp_path, monkeypatch):
+    install_local_io(monkeypatch, LocalMedia())
+    original = acceptance.atomic_json
+    def slow_report(*args, **kwargs):
+        time.sleep(.25)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(acceptance, 'atomic_json', slow_report)
+    stamps = []
+    async def heartbeat():
+        while True:
+            stamps.append(clock.monotonic())
+            await asyncio.sleep(.005)
+    pulse = asyncio.create_task(heartbeat())
+    try:
+        await acceptance.run(tmp_path, 'avatar', minutes=.05, rounds=0)
+    finally:
+        pulse.cancel()
+        await asyncio.gather(pulse, return_exceptions=True)
+    assert max(b-a for a, b in zip(stamps, stamps[1:])) < .12
+    assert read_report(tmp_path)['status'] == 'passed'
+
+
+async def test_cancelled_monitor_drains_old_report_before_final_status(tmp_path, monkeypatch):
+    media = LocalMedia()
+    install_local_io(monkeypatch, media)
+    original = acceptance.atomic_json
+    writes = []
+    cleanup_observations = []
+    def delayed_progress(path, value):
+        if value['status'] == 'running':
+            deadline = clock.monotonic()+3
+            while not media.deleted and clock.monotonic()<deadline:
+                time.sleep(.01)
+            cleanup_observations.append((media.closed, media.deleted))
+        writes.append(value['status'])
+        return original(path, value)
+    monkeypatch.setattr(acceptance, 'atomic_json', delayed_progress)
+    await acceptance.run(tmp_path, 'avatar', minutes=0, rounds=0)
+    assert writes == ['running', 'passed']
+    assert cleanup_observations == [(True, True)]
+    assert read_report(tmp_path)['status'] == 'passed'

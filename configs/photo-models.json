@@ -1,0 +1,1597 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "ditto": {
+      "repo": "antgroup/ditto-talkinghead",
+      "commit": "c3e47eee2e626500017a0556b470d6d4182f85e8",
+      "destination": "third_party/ditto",
+      "files": [
+        {
+          "name": ".gitignore",
+          "size": 362,
+          "sha1": "3f46987c4ce3f273d82fa61c73a420cbfa79e1e0"
+        },
+        {
+          "name": "LICENSE",
+          "size": 11356,
+          "sha1": "f49a4e16e68b128803cc2dcea614603632b04eac"
+        },
+        {
+          "name": "README.md",
+          "size": 9074,
+          "sha1": "bf18455fbea08e68485a396538e8a97e08c64417"
+        },
+        {
+          "name": "core/atomic_components/audio2motion.py",
+          "size": 6366,
+          "sha1": "12d2cf6e0d5c57303b6948d56455e6508c565ece"
+        },
+        {
+          "name": "core/atomic_components/avatar_registrar.py",
+          "size": 2665,
+          "sha1": "47c2a4c72b2197f720c5fe0464d4e44720daf6f8"
+        },
+        {
+          "name": "core/atomic_components/cfg.py",
+          "size": 2827,
+          "sha1": "28e28ec9e53c3bef4f7de601771be92093a9bffc"
+        },
+        {
+          "name": "core/atomic_components/condition_handler.py",
+          "size": 5984,
+          "sha1": "ba1af63eecb9646eb85a91d864a6d912b286e5d7"
+        },
+        {
+          "name": "core/atomic_components/decode_f3d.py",
+          "size": 329,
+          "sha1": "96b85d2ac855ccb4b80804416e1c4e9c818789b2"
+        },
+        {
+          "name": "core/atomic_components/loader.py",
+          "size": 3342,
+          "sha1": "fb46cec89081c04e641b6ab0f87afa6589c3e340"
+        },
+        {
+          "name": "core/atomic_components/motion_stitch.py",
+          "size": 14159,
+          "sha1": "7967984b0abd39bcf31fc5784756c360ce40dbbc"
+        },
+        {
+          "name": "core/atomic_components/putback.py",
+          "size": 2073,
+          "sha1": "39a5a6dc1581697774de0d5b62b214a09c8dfb72"
+        },
+        {
+          "name": "core/atomic_components/source2info.py",
+          "size": 4688,
+          "sha1": "1a64fb6fbe16928ea60f4281930525f643fc6d7e"
+        },
+        {
+          "name": "core/atomic_components/warp_f3d.py",
+          "size": 377,
+          "sha1": "be4262f6d329f75b7b3ca661ebc8ad8d3503c6e3"
+        },
+        {
+          "name": "core/atomic_components/wav2feat.py",
+          "size": 3252,
+          "sha1": "10f360edb26b86c0ade9e59de4b71bc64983de82"
+        },
+        {
+          "name": "core/atomic_components/writer.py",
+          "size": 1159,
+          "sha1": "4c075b5a65fc75b992ebd1addf31cce81387eb5c"
+        },
+        {
+          "name": "core/aux_models/blaze_face.py",
+          "size": 14018,
+          "sha1": "508a5907d01f0ca30d51a7fc6c3a8a4a5ee93606"
+        },
+        {
+          "name": "core/aux_models/face_mesh.py",
+          "size": 3596,
+          "sha1": "0557f572b5a89c13f5caa887aaf14308b1451b11"
+        },
+        {
+          "name": "core/aux_models/hubert_stream.py",
+          "size": 1114,
+          "sha1": "30387c6df754d129d6f1815e131718e68069e411"
+        },
+        {
+          "name": "core/aux_models/insightface_det.py",
+          "size": 8694,
+          "sha1": "10a6774b2dd69ee0dfecc4fb3b74a04093c7f5ba"
+        },
+        {
+          "name": "core/aux_models/insightface_landmark106.py",
+          "size": 3239,
+          "sha1": "e2a701a628cb848fd36218d1bc5631c627bd7f9f"
+        },
+        {
+          "name": "core/aux_models/landmark203.py",
+          "size": 1794,
+          "sha1": "72f6ef1898e0d2ed54d9b68b71ba72a1be0a6da2"
+        },
+        {
+          "name": "core/aux_models/mediapipe_landmark478.py",
+          "size": 4076,
+          "sha1": "305545b25cef270b5f00e453f13ef4b29a12faff"
+        },
+        {
+          "name": "core/aux_models/modules/__init__.py",
+          "size": 192,
+          "sha1": "2542938c6fcffcc75d908fbe3c9d1c547fcadec4"
+        },
+        {
+          "name": "core/aux_models/modules/hubert_stream.py",
+          "size": 568,
+          "sha1": "04f0060f3a6934fb273c357e3a69b2263f4d67ab"
+        },
+        {
+          "name": "core/aux_models/modules/landmark106.py",
+          "size": 2793,
+          "sha1": "cc6210dabed2c7493775c3483bb7a6e861130fb8"
+        },
+        {
+          "name": "core/aux_models/modules/landmark203.py",
+          "size": 1171,
+          "sha1": "0ff41f1f33e5b155e86113802fa8490ba30eb3eb"
+        },
+        {
+          "name": "core/aux_models/modules/landmark478.py",
+          "size": 1221,
+          "sha1": "2614a02b9eda7a09f97646dcb5a1fe218c3f5df0"
+        },
+        {
+          "name": "core/aux_models/modules/retinaface.py",
+          "size": 7949,
+          "sha1": "ca5f33300d0f535c1d715e48ee860010f2451320"
+        },
+        {
+          "name": "core/models/appearance_extractor.py",
+          "size": 1123,
+          "sha1": "906ca1211b936c3a3e5bc94ec1da76dd8334d0fe"
+        },
+        {
+          "name": "core/models/decoder.py",
+          "size": 1121,
+          "sha1": "54f6336bdd3e4cf02410798274d365f38ec5c941"
+        },
+        {
+          "name": "core/models/lmdm.py",
+          "size": 5068,
+          "sha1": "a6467fa8f77e072165c461a16afa3525d8cebd27"
+        },
+        {
+          "name": "core/models/modules/LMDM.py",
+          "size": 5225,
+          "sha1": "323ff25c61e85eb6344b75ba19338eb934853613"
+        },
+        {
+          "name": "core/models/modules/__init__.py",
+          "size": 271,
+          "sha1": "925672f5f1221820a5dbb483af1f8ea6c492e613"
+        },
+        {
+          "name": "core/models/modules/appearance_feature_extractor.py",
+          "size": 2399,
+          "sha1": "dc5c1a72a613762d11a04fe9316859a78e591fec"
+        },
+        {
+          "name": "core/models/modules/convnextv2.py",
+          "size": 5197,
+          "sha1": "1004d6ef08cb0d1c4b6a601f361f83a60833efee"
+        },
+        {
+          "name": "core/models/modules/dense_motion.py",
+          "size": 5547,
+          "sha1": "c1a7f9a5a1b5463c4a1ddcee2bf36dcd34735706"
+        },
+        {
+          "name": "core/models/modules/lmdm_modules/model.py",
+          "size": 13381,
+          "sha1": "1ad7eb6d77074c931ac986d3a81bdf8bcf5f48c0"
+        },
+        {
+          "name": "core/models/modules/lmdm_modules/rotary_embedding_torch.py",
+          "size": 3979,
+          "sha1": "7f9410d04bfce12cfd7a19c7a8de9ebbf9ce4540"
+        },
+        {
+          "name": "core/models/modules/lmdm_modules/utils.py",
+          "size": 3009,
+          "sha1": "883cf5ba52cdadbb3033c870a95147486bd4487e"
+        },
+        {
+          "name": "core/models/modules/motion_extractor.py",
+          "size": 741,
+          "sha1": "1e6d1ac9b439e1280c01dd5a15aa47e930fdc380"
+        },
+        {
+          "name": "core/models/modules/spade_generator.py",
+          "size": 3069,
+          "sha1": "f7bf31087dd8f1de265e40198099a8a9e743d78a"
+        },
+        {
+          "name": "core/models/modules/stitching_network.py",
+          "size": 2602,
+          "sha1": "1db44d67c781fe2585bd5a4eeb5664ebcf0546f0"
+        },
+        {
+          "name": "core/models/modules/util.py",
+          "size": 15937,
+          "sha1": "dc6b925ff4d93dbb89d0d1e593bee15c888c39ee"
+        },
+        {
+          "name": "core/models/modules/warping_network.py",
+          "size": 3007,
+          "sha1": "3895b899eb574a513557f9345df8f69bab552444"
+        },
+        {
+          "name": "core/models/motion_extractor.py",
+          "size": 1666,
+          "sha1": "d4e05ac286334e99912af134eaef373a7d8d1969"
+        },
+        {
+          "name": "core/models/stitch_network.py",
+          "size": 1123,
+          "sha1": "56efa7ad8b1e79eafffd92121a15cbfc92af65dd"
+        },
+        {
+          "name": "core/models/warp_network.py",
+          "size": 1481,
+          "sha1": "8f14edf66c57567bebd5341a4c376dca0a646d46"
+        },
+        {
+          "name": "core/utils/blend/__init__.py",
+          "size": 72,
+          "sha1": "f9e91b0dfd73ec50b041d112d91aa1893a27c600"
+        },
+        {
+          "name": "core/utils/blend/blend.pyx",
+          "size": 1190,
+          "sha1": "68e4695dc644ad1f6e2cc0538a13c853fbef2f7a"
+        },
+        {
+          "name": "core/utils/blend/blend.pyxbld",
+          "size": 451,
+          "sha1": "75e1d54ac97c8c38475250b6b441f54ed0b5c5b5"
+        },
+        {
+          "name": "core/utils/blend/blend_impl.c",
+          "size": 1301,
+          "sha1": "bf0661d494057650cad4f5981db298a8a05f8478"
+        },
+        {
+          "name": "core/utils/blend/blend_impl.h",
+          "size": 294,
+          "sha1": "854092525031c01a65dc7e288cc83324f59b7a1c"
+        },
+        {
+          "name": "core/utils/crop.py",
+          "size": 14240,
+          "sha1": "e01d08d53fb1d212c40da1753149b33eb5b14deb"
+        },
+        {
+          "name": "core/utils/eye_info.py",
+          "size": 3585,
+          "sha1": "01fdc1e1d791e0777711642cc415d8c6bd90fdfe"
+        },
+        {
+          "name": "core/utils/get_mask.py",
+          "size": 2226,
+          "sha1": "1cb83658455011bbeb6e93b3461ef5b777946a52"
+        },
+        {
+          "name": "core/utils/load_model.py",
+          "size": 1897,
+          "sha1": "2b2fda8e9405117758f95faadbfff2be3407949f"
+        },
+        {
+          "name": "core/utils/tensorrt_utils.py",
+          "size": 10480,
+          "sha1": "ff233b9c54ac81e25722e36afe0b8a70def27844"
+        },
+        {
+          "name": "environment.yaml",
+          "size": 4063,
+          "sha1": "bae39453d68edbb7af3f88de11bb3b89220d51e5"
+        },
+        {
+          "name": "inference.py",
+          "size": 3066,
+          "sha1": "155109ce6ab260eb1fa04ea4459b9107c19e0f9f"
+        },
+        {
+          "name": "scripts/cvt_onnx_to_trt.py",
+          "size": 5283,
+          "sha1": "8e7b1c0e2a268af31188bf6956d2e07bcdee736a"
+        },
+        {
+          "name": "stream_pipeline_offline.py",
+          "size": 20374,
+          "sha1": "fea86099b0eebc881cb2be2d85246da69a265a03"
+        },
+        {
+          "name": "stream_pipeline_online.py",
+          "size": 18769,
+          "sha1": "0fbfd755af7c134066c98a5945031a632e7ac4da"
+        }
+      ]
+    },
+    "cosyvoice": {
+      "repo": "QwenAudio/CosyVoice",
+      "commit": "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc",
+      "destination": "third_party/cosyvoice",
+      "files": [
+        {
+          "name": ".gitignore",
+          "size": 560,
+          "sha1": "4a9f23f8f2e48de8d4309382ad28f43e006786bd"
+        },
+        {
+          "name": ".gitmodules",
+          "size": 123,
+          "sha1": "3d1b157d53a4d636737eefb44d513fa9ec0515d5"
+        },
+        {
+          "name": "CODE_OF_CONDUCT.md",
+          "size": 3350,
+          "sha1": "66c2a4cafb77b81f9d8f7e65a485b841a6a347a9"
+        },
+        {
+          "name": "FAQ.md",
+          "size": 671,
+          "sha1": "53df058b3e66f6070cfd49704c8e91759ddd5047"
+        },
+        {
+          "name": "LICENSE",
+          "size": 11357,
+          "sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64"
+        },
+        {
+          "name": "README.md",
+          "size": 13764,
+          "sha1": "ef8829e0e981678cd95cb1d4c88465ae97804b88"
+        },
+        {
+          "name": "cosyvoice/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "cosyvoice/bin/average_model.py",
+          "size": 3202,
+          "sha1": "b7140c12ef4c0868019b62f2ebe32df99687f66e"
+        },
+        {
+          "name": "cosyvoice/bin/export_jit.py",
+          "size": 3839,
+          "sha1": "3ecfd05f76f593d054c2432103479cc017e40b2b"
+        },
+        {
+          "name": "cosyvoice/bin/export_onnx.py",
+          "size": 4486,
+          "sha1": "58e7708a487578d91efaab60272671084aba49ac"
+        },
+        {
+          "name": "cosyvoice/bin/train.py",
+          "size": 8153,
+          "sha1": "d650161c8b0bb2519025ba83758fe0424ea952ae"
+        },
+        {
+          "name": "cosyvoice/cli/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "cosyvoice/cli/cosyvoice.py",
+          "size": 14356,
+          "sha1": "7ab04a70fff9a0960f2e34ef35555c55486bf2a1"
+        },
+        {
+          "name": "cosyvoice/cli/frontend.py",
+          "size": 12553,
+          "sha1": "6d397cc99be417e98b8d9fc7a1438ec722312276"
+        },
+        {
+          "name": "cosyvoice/cli/model.py",
+          "size": 28138,
+          "sha1": "92a15d985dfbca4bb676d3fdc02732be1d07c461"
+        },
+        {
+          "name": "cosyvoice/dataset/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "cosyvoice/dataset/dataset.py",
+          "size": 5063,
+          "sha1": "ea19840d05f2929054454809f92d5fe0889d6537"
+        },
+        {
+          "name": "cosyvoice/dataset/processor.py",
+          "size": 16749,
+          "sha1": "545c007874ea6064b0b4161e3a390e447202a731"
+        },
+        {
+          "name": "cosyvoice/flow/DiT/dit.py",
+          "size": 5688,
+          "sha1": "0d637e4ad2fc8514b62c7ea7e564b7d29d4d91d4"
+        },
+        {
+          "name": "cosyvoice/flow/DiT/modules.py",
+          "size": 20551,
+          "sha1": "be8caecb8a2acd290f4f6e7e1d756dff67f78e5b"
+        },
+        {
+          "name": "cosyvoice/flow/decoder.py",
+          "size": 19866,
+          "sha1": "97768a459fbb89a2c99f98de302628d8ccafda67"
+        },
+        {
+          "name": "cosyvoice/flow/flow.py",
+          "size": 19736,
+          "sha1": "c25518621bf98e95d5ed75b83c5a2a610d0822be"
+        },
+        {
+          "name": "cosyvoice/flow/flow_matching.py",
+          "size": 10552,
+          "sha1": "d3beb9ec2ce8c26972433080c458f90c3f2c0467"
+        },
+        {
+          "name": "cosyvoice/flow/length_regulator.py",
+          "size": 3137,
+          "sha1": "e1b6c1bd1f877d9c52100fa6074fc6cf81bd0fe0"
+        },
+        {
+          "name": "cosyvoice/hifigan/discriminator.py",
+          "size": 8617,
+          "sha1": "bb8e85f7379d3de96f6eb1f6b0ef0ba1fdbb212a"
+        },
+        {
+          "name": "cosyvoice/hifigan/f0_predictor.py",
+          "size": 3757,
+          "sha1": "c896890612053d97a9567bfe261dce000dae0f52"
+        },
+        {
+          "name": "cosyvoice/hifigan/generator.py",
+          "size": 30487,
+          "sha1": "bbc2a2112bfd260963765af33760c95c3161fe14"
+        },
+        {
+          "name": "cosyvoice/hifigan/hifigan.py",
+          "size": 3240,
+          "sha1": "046c2cf97055967729dcf231f449bf9cf3058d19"
+        },
+        {
+          "name": "cosyvoice/llm/llm.py",
+          "size": 35971,
+          "sha1": "e8e81d942af886d85b1331f9ce8b72ba42f8843b"
+        },
+        {
+          "name": "cosyvoice/tokenizer/assets/multilingual_zh_ja_yue_char_del.tiktoken",
+          "size": 907395,
+          "sha1": "ac47fe685d24565030965a94c0d98e00e0331eaa"
+        },
+        {
+          "name": "cosyvoice/tokenizer/tokenizer.py",
+          "size": 11253,
+          "sha1": "6ecf4ae84b1b88d10c42e110db4665f944cc0317"
+        },
+        {
+          "name": "cosyvoice/transformer/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "cosyvoice/transformer/activation.py",
+          "size": 3089,
+          "sha1": "8cea54816385d3b6585ccc2417bc71630d578177"
+        },
+        {
+          "name": "cosyvoice/transformer/attention.py",
+          "size": 14389,
+          "sha1": "8c0c0983a833a6a91cae306a8198ebb2ca82696f"
+        },
+        {
+          "name": "cosyvoice/transformer/convolution.py",
+          "size": 9772,
+          "sha1": "edb32b241035852ae07f027d1ea6fcf42f7aaba4"
+        },
+        {
+          "name": "cosyvoice/transformer/decoder.py",
+          "size": 16580,
+          "sha1": "98f3a66a6649b125343bb111b337f92793c492a9"
+        },
+        {
+          "name": "cosyvoice/transformer/decoder_layer.py",
+          "size": 4807,
+          "sha1": "91c7c5d7fb2a8e79cea7705646e5381016f73466"
+        },
+        {
+          "name": "cosyvoice/transformer/embedding.py",
+          "size": 11777,
+          "sha1": "ba20d71bec11baa7081bed522399cf3a2046ef56"
+        },
+        {
+          "name": "cosyvoice/transformer/encoder.py",
+          "size": 21434,
+          "sha1": "c5709d0ce86b71cb994a9ea188e66fd233ebda67"
+        },
+        {
+          "name": "cosyvoice/transformer/encoder_layer.py",
+          "size": 9602,
+          "sha1": "efbb12dd365770bebe8bca75276fe63be260a08f"
+        },
+        {
+          "name": "cosyvoice/transformer/label_smoothing_loss.py",
+          "size": 3459,
+          "sha1": "feacabf09609ee6eb047c89ce18d372256c72c71"
+        },
+        {
+          "name": "cosyvoice/transformer/positionwise_feed_forward.py",
+          "size": 4219,
+          "sha1": "b7a2cf6e7315e3a5ed2794423daff0a59cc5b208"
+        },
+        {
+          "name": "cosyvoice/transformer/subsampling.py",
+          "size": 12666,
+          "sha1": "e17c2e324e3afb24e1b619effe29cef07c9c5b3a"
+        },
+        {
+          "name": "cosyvoice/transformer/upsample_encoder.py",
+          "size": 14229,
+          "sha1": "baf7481977d7079dbbabd20332eced7b046738c4"
+        },
+        {
+          "name": "cosyvoice/utils/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "cosyvoice/utils/class_utils.py",
+          "size": 3588,
+          "sha1": "aab83266a2644b5110aeaa64317c25b61419ba0d"
+        },
+        {
+          "name": "cosyvoice/utils/common.py",
+          "size": 9323,
+          "sha1": "3f235a62e0455abbbf028635978b800e8be951af"
+        },
+        {
+          "name": "cosyvoice/utils/executor.py",
+          "size": 8842,
+          "sha1": "f08fa09465bc194d4a9feb3a0215ed9fdc66b4b0"
+        },
+        {
+          "name": "cosyvoice/utils/file_utils.py",
+          "size": 4887,
+          "sha1": "b173ef2014f76fcfd28ce4f927fa05773970692b"
+        },
+        {
+          "name": "cosyvoice/utils/frontend_utils.py",
+          "size": 4273,
+          "sha1": "ea1c9fc8cc7438f257eecffe460a8b6f4ddf8584"
+        },
+        {
+          "name": "cosyvoice/utils/losses.py",
+          "size": 2121,
+          "sha1": "2429fdcd5624297bf0c8ac3842e2e93ac84aee43"
+        },
+        {
+          "name": "cosyvoice/utils/mask.py",
+          "size": 9728,
+          "sha1": "5d3dfd6ca6cd84e95f237a9aef4467cb7d2d4c33"
+        },
+        {
+          "name": "cosyvoice/utils/onnx.py",
+          "size": 2867,
+          "sha1": "b459eb54df934ff304829891de7bac87f1606168"
+        },
+        {
+          "name": "cosyvoice/utils/scheduler.py",
+          "size": 24920,
+          "sha1": "06e7f3dacbd3f890f35020acea56783b58f98e0e"
+        },
+        {
+          "name": "cosyvoice/utils/train_utils.py",
+          "size": 16626,
+          "sha1": "2ab5ebe66c50f03e860091b71c16497a0c78a394"
+        },
+        {
+          "name": "cosyvoice/vllm/cosyvoice2.py",
+          "size": 4541,
+          "sha1": "fff05437f056419487613b48df20e33fda886b80"
+        },
+        {
+          "name": "docker/Dockerfile",
+          "size": 2085,
+          "sha1": "7d7b16ee6e699aa60a91f67b963545cc1e40428f"
+        },
+        {
+          "name": "example.py",
+          "size": 9116,
+          "sha1": "875226767d2f358a6140726576beecca30aa36b0"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/Dockerfile",
+          "size": 486,
+          "sha1": "17d80ed5cddfea442fbc8465bd3a63f18b0c2aab"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/README.md",
+          "size": 4553,
+          "sha1": "1f5c6a0bc6bed8f541a585990334dd68ff8b5658"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/huggingface_to_pretrained.py",
+          "size": 2932,
+          "sha1": "ca49fc3b72202d05f243e19f7df7ee0a179c019a"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/infer_dataset.py",
+          "size": 14065,
+          "sha1": "f72cd7733c8008aacac25bbf5314174e6dbb766d"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/prepare_data.py",
+          "size": 2986,
+          "sha1": "46c3c0977cf95037fb592676696ec97294ca92da"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/pretrained_to_huggingface.py",
+          "size": 5493,
+          "sha1": "7aaa10b625357f45bb9fe0e62c03b96929801c02"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/requirements.txt",
+          "size": 457,
+          "sha1": "50f4edd72fb502d4cf17f2a8f3a5d52c9f5e41f0"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/reward_tts.py",
+          "size": 7468,
+          "sha1": "4c4076119885d9af8c905fad5e3d4a3da005ecb0"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/run.sh",
+          "size": 6234,
+          "sha1": "b1658e2426e38bab184a8a231742213f08e136d9"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/scripts/compute_wer.sh",
+          "size": 942,
+          "sha1": "43a6872bcbd2296b3097d59394b4a568014169fc"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/scripts/offline-decode-files.py",
+          "size": 23541,
+          "sha1": "90c46658999a1b5d48c92c75fbd97f6b41c5de4b"
+        },
+        {
+          "name": "examples/grpo/cosyvoice2/token2wav_asr_server.py",
+          "size": 12914,
+          "sha1": "9f9f80bbb9f67e353019b2152879e98a84823a86"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/conf/cosyvoice.yaml",
+          "size": 8349,
+          "sha1": "c421b4f36f6be438d9f67389fc1eb56eff3a70ac"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/conf/ds_stage2.json",
+          "size": 925,
+          "sha1": "2b2de3df7fe50968269ecafbf1f4ab9eb210f322"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/local/download_and_untar.sh",
+          "size": 2845,
+          "sha1": "ec1360afea16a70d162e8c3098733e7657910f3d"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/local/prepare_data.py",
+          "size": 1946,
+          "sha1": "2f0b850dca8cfbfb67ed62f89d5b903d8254ee2d"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/local/prepare_reject_sample.py",
+          "size": 1754,
+          "sha1": "065532cc67fbe74adcb4df737ba6ffc9ccebdf3a"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/path.sh",
+          "size": 185,
+          "sha1": "e0fa06ca2168b64b7c06cc81ae5a36d1aa08a613"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/run.sh",
+          "size": 4379,
+          "sha1": "5449ce6c636951dc694feeed91874329fe0f31ed"
+        },
+        {
+          "name": "examples/libritts/cosyvoice/tts_text.json",
+          "size": 89,
+          "sha1": "9f3e8d9f7326b7e2eb9b9cbcfc9611d8f5c8bd9d"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/conf/cosyvoice2.yaml",
+          "size": 7481,
+          "sha1": "8a4db63b1e3a9be36d001df61109074f002813a3"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/conf/ds_stage2.json",
+          "size": 925,
+          "sha1": "2b2de3df7fe50968269ecafbf1f4ab9eb210f322"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/local",
+          "size": 18,
+          "sha1": "5e847a128fe51c7d44379bc7f0dea5e20264b871"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/path.sh",
+          "size": 20,
+          "sha1": "59f7179ef6c2001073ef69e7435d2f267297848e"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/run.sh",
+          "size": 4610,
+          "sha1": "018f84189157e71262f11d2fe67cfb427c674f88"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/run_dpo.sh",
+          "size": 5127,
+          "sha1": "cceb44151cc82c237401cfb0a098457c5448f714"
+        },
+        {
+          "name": "examples/libritts/cosyvoice2/tts_text.json",
+          "size": 26,
+          "sha1": "e85cf1c2ad2ba445e1f4b2fc01116f2283d1bf8c"
+        },
+        {
+          "name": "examples/libritts/cosyvoice3/conf/cosyvoice3.yaml",
+          "size": 7106,
+          "sha1": "36dfee4889b6f1c5a1e85e59a0e716005aa0063f"
+        },
+        {
+          "name": "examples/libritts/cosyvoice3/conf/ds_stage2.json",
+          "size": 925,
+          "sha1": "2b2de3df7fe50968269ecafbf1f4ab9eb210f322"
+        },
+        {
+          "name": "examples/libritts/cosyvoice3/local",
+          "size": 18,
+          "sha1": "5e847a128fe51c7d44379bc7f0dea5e20264b871"
+        },
+        {
+          "name": "examples/libritts/cosyvoice3/path.sh",
+          "size": 20,
+          "sha1": "59f7179ef6c2001073ef69e7435d2f267297848e"
+        },
+        {
+          "name": "examples/libritts/cosyvoice3/run.sh",
+          "size": 4719,
+          "sha1": "fb7d1039491f07bbb966ecf25fce325738f299d1"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/conf",
+          "size": 29,
+          "sha1": "e1368df31e040d054b76460bba588b4013a08b24"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/local/download_and_untar.sh",
+          "size": 2615,
+          "sha1": "80dc45c744adfbf50f8a2f8e7add7ad14ff0d74e"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/local/prepare_data.py",
+          "size": 1698,
+          "sha1": "51ccd5f9c55bba232ae125995e6f734a84086d4d"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/path.sh",
+          "size": 32,
+          "sha1": "4541305ff96969b629178b62253cd9555f09db47"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/run.sh",
+          "size": 4021,
+          "sha1": "b3e03360deda3701037f20733c3598fdfc9b5d30"
+        },
+        {
+          "name": "examples/magicdata-read/cosyvoice/tts_text.json",
+          "size": 598,
+          "sha1": "9dd71095bc8800359a9fdc12934658b794032c19"
+        },
+        {
+          "name": "requirements.txt",
+          "size": 1125,
+          "sha1": "989bccf6108a1ba886e4021cd4a4d620aadab592"
+        },
+        {
+          "name": "runtime/python/Dockerfile",
+          "size": 732,
+          "sha1": "e2d2012cfe178f841a41f80c67581ef49c1f29b4"
+        },
+        {
+          "name": "runtime/python/fastapi/client.py",
+          "size": 3789,
+          "sha1": "0fb29b76ff0a374fa1f1b457c6067c48ef5036a9"
+        },
+        {
+          "name": "runtime/python/fastapi/server.py",
+          "size": 3732,
+          "sha1": "1502f9cbf3c8423c0506f233a9537f7760e0b58c"
+        },
+        {
+          "name": "runtime/python/grpc/client.py",
+          "size": 4754,
+          "sha1": "9885130aaf6453ccbc9c7addc9906a6720d18977"
+        },
+        {
+          "name": "runtime/python/grpc/cosyvoice.proto",
+          "size": 757,
+          "sha1": "fe0c3ad242326813b7e925c66a2d9b09567f548c"
+        },
+        {
+          "name": "runtime/python/grpc/server.py",
+          "size": 4255,
+          "sha1": "28ecc19a4c1d75bd3af2333ed3f79e8ffe52c260"
+        },
+        {
+          "name": "runtime/triton_trtllm/Dockerfile.server",
+          "size": 411,
+          "sha1": "38494f4d75c3caf94102c129bb5b186694ddd34e"
+        },
+        {
+          "name": "runtime/triton_trtllm/README.Cosyvoice2.DiT.md",
+          "size": 7658,
+          "sha1": "c4bfa5259c6ebaad9c7da6410fc143d2f19c1dc5"
+        },
+        {
+          "name": "runtime/triton_trtllm/README.Cosyvoice2.Unet.md",
+          "size": 6365,
+          "sha1": "33f2908395d971064230f4e1d9c5e839ebe7d5a5"
+        },
+        {
+          "name": "runtime/triton_trtllm/README.Cosyvoice3.md",
+          "size": 3389,
+          "sha1": "063bf07e14bf489db096a853950c250efb1a1acb"
+        },
+        {
+          "name": "runtime/triton_trtllm/README.md",
+          "size": 1547,
+          "sha1": "eafaf0ab6be7344bd2ff4bf5329907905750da61"
+        },
+        {
+          "name": "runtime/triton_trtllm/client_grpc.py",
+          "size": 36518,
+          "sha1": "440904f2ad1a62c37f3c375053d9a23c9bbbe584"
+        },
+        {
+          "name": "runtime/triton_trtllm/client_http.py",
+          "size": 5557,
+          "sha1": "9c15a6cb2cb6c30898f966ec713aed7e820a7ba3"
+        },
+        {
+          "name": "runtime/triton_trtllm/docker-compose.cosyvoice2.dit.yml",
+          "size": 735,
+          "sha1": "35312a13e93db6b8a6d03134f6e45ab252b2fcb8"
+        },
+        {
+          "name": "runtime/triton_trtllm/docker-compose.cosyvoice2.unet.yml",
+          "size": 630,
+          "sha1": "e221e568483029b6cbb57a7d26f8d5bcb7450f3c"
+        },
+        {
+          "name": "runtime/triton_trtllm/docker-compose.cosyvoice3.yml",
+          "size": 615,
+          "sha1": "5ebb9774caf86b834513281bc186f8f6f40a1f9d"
+        },
+        {
+          "name": "runtime/triton_trtllm/infer_cosyvoice3.py",
+          "size": 21416,
+          "sha1": "69b1a83a62b5d2c14129a1965c64cf6dd042ef57"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/audio_tokenizer/1/model.py",
+          "size": 3995,
+          "sha1": "339cb0ee9fc08b6359db602a05c2ee564a9db9ef"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/audio_tokenizer/config.pbtxt",
+          "size": 1181,
+          "sha1": "4bb972c7b2eaaf04e1f9026ac836981f7f812f76"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/cosyvoice2/1/model.py",
+          "size": 21008,
+          "sha1": "94c82c6fbb85c3039e27389e774bc95fb5902ef0"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/cosyvoice2/config.pbtxt",
+          "size": 1537,
+          "sha1": "73a9a052f3f81d386d062a8270bf0b49996bff75"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/cosyvoice2_dit/1/model.py",
+          "size": 17071,
+          "sha1": "2e2533c4ac0207085708aea0041e002ff5e58b83"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/cosyvoice2_dit/config.pbtxt",
+          "size": 1541,
+          "sha1": "e64647efa26e4b2a0b6f270faa028c696c7684cb"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/speaker_embedding/1/model.py",
+          "size": 6778,
+          "sha1": "1a7293a08295261ead063f65b4dd600a62210a74"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/speaker_embedding/config.pbtxt",
+          "size": 1103,
+          "sha1": "fd91bd671bb1c49f54b227b039e2862254635f7d"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/tensorrt_llm/1/.gitkeep",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/tensorrt_llm/config.pbtxt",
+          "size": 18057,
+          "sha1": "3da789470746cfa02200a44a9e34471adad45d20"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/token2wav/1/model.py",
+          "size": 14605,
+          "sha1": "1e3805200e247866633dfd43bf4809a97a0dca2e"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/token2wav/config.pbtxt",
+          "size": 1640,
+          "sha1": "c33a85f5e93e73888515ada8495b09ed17d7f5ba"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/token2wav_dit/1/model.py",
+          "size": 5508,
+          "sha1": "f9e461eca8727a3db38a3deee814877a04f95146"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/token2wav_dit/1/token2wav_dit.py",
+          "size": 25760,
+          "sha1": "1c6c4235f8b8e0bee5b3e8496a7097123699b0c0"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo/token2wav_dit/config.pbtxt",
+          "size": 1426,
+          "sha1": "3f579aa0d2915ab083513e042215b2cd7806597e"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/audio_tokenizer/1/model.py",
+          "size": 3827,
+          "sha1": "f70a715b6860214e3e15c614c3150c6dd92b0428"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/audio_tokenizer/config.pbtxt",
+          "size": 1181,
+          "sha1": "4bb972c7b2eaaf04e1f9026ac836981f7f812f76"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/cosyvoice3/1/model.py",
+          "size": 22340,
+          "sha1": "519adc86c8189db054b11e4b1189d2cd96e82c48"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/cosyvoice3/config.pbtxt",
+          "size": 1537,
+          "sha1": "fa988b5476c8c77afbcd81b6c81a1a6caae9b806"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/speaker_embedding/1/model.py",
+          "size": 6638,
+          "sha1": "132ca8234568739a33f3c0455e5ee8f290920298"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/speaker_embedding/config.pbtxt",
+          "size": 1103,
+          "sha1": "fd91bd671bb1c49f54b227b039e2862254635f7d"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/token2wav/1/model.py",
+          "size": 9309,
+          "sha1": "abfb1f6560ef9432a1005f5de47fbefa2fa86915"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/token2wav/config.pbtxt",
+          "size": 1103,
+          "sha1": "a46926c83dddf2ab3aeb60a1b6a9a238e9005558"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/vocoder/1/model.py",
+          "size": 2599,
+          "sha1": "987fa49eed1a4041bac962f37980549f11df8373"
+        },
+        {
+          "name": "runtime/triton_trtllm/model_repo_cosyvoice3/vocoder/config.pbtxt",
+          "size": 567,
+          "sha1": "5ebb7668229813a1bb319b5d12f3acc9547017c5"
+        },
+        {
+          "name": "runtime/triton_trtllm/offline_inference.py",
+          "size": 27147,
+          "sha1": "326fb0ed890d65d60f0ca41eb27613cccf5c0543"
+        },
+        {
+          "name": "runtime/triton_trtllm/requirements.txt",
+          "size": 161,
+          "sha1": "2fce08cd82fb45d87a1b1b995603f62ca7fe3520"
+        },
+        {
+          "name": "runtime/triton_trtllm/run.sh",
+          "size": 6836,
+          "sha1": "7c7f3cd22c24b4ca47c71f5275811fe4266a9301"
+        },
+        {
+          "name": "runtime/triton_trtllm/run_cosyvoice3.sh",
+          "size": 6555,
+          "sha1": "21871e5b90d87dfa7b95654903d0e61594a6c53f"
+        },
+        {
+          "name": "runtime/triton_trtllm/run_stepaudio2_dit_token2wav.sh",
+          "size": 9939,
+          "sha1": "28ab13fea9e407c8604a5a07529ac69feb1d14c3"
+        },
+        {
+          "name": "runtime/triton_trtllm/scripts/convert_checkpoint.py",
+          "size": 13445,
+          "sha1": "7cd166f1160129548b4d60cf0cda481c1ff233d1"
+        },
+        {
+          "name": "runtime/triton_trtllm/scripts/convert_cosyvoice3_to_hf.py",
+          "size": 16278,
+          "sha1": "37c8c28d66e4742b318c3d9216fff6bce81f4329"
+        },
+        {
+          "name": "runtime/triton_trtllm/scripts/fill_template.py",
+          "size": 1827,
+          "sha1": "6e6a2bcbe5ea1e10a9709b7dd2dc50742230ed74"
+        },
+        {
+          "name": "runtime/triton_trtllm/scripts/test_llm.py",
+          "size": 5070,
+          "sha1": "90e6710ccd80514cfa372582ead829ce808f84fd"
+        },
+        {
+          "name": "runtime/triton_trtllm/streaming_inference.py",
+          "size": 5254,
+          "sha1": "7cfb6f9a9a59e695d2f3595b27c219d7242d16ff"
+        },
+        {
+          "name": "runtime/triton_trtllm/token2wav.py",
+          "size": 17183,
+          "sha1": "09b6db6aee4717fd7c1c3769d44b74e3ee2ebe73"
+        },
+        {
+          "name": "runtime/triton_trtllm/token2wav_cosyvoice3.py",
+          "size": 19483,
+          "sha1": "69303dd3425a224912494e733e03cead08c42ee5"
+        },
+        {
+          "name": "runtime/triton_trtllm/token2wav_dit.py",
+          "size": 43,
+          "sha1": "2bd78a5457a749d5d8057cf960347a0fc96e4214"
+        },
+        {
+          "name": "tools/extract_embedding.py",
+          "size": 2998,
+          "sha1": "de48779e815c0c1c117aaaa723847915f05a8e59"
+        },
+        {
+          "name": "tools/extract_speech_token.py",
+          "size": 2797,
+          "sha1": "976a23b487b98deeb27d42fc0fdea7b7d1271931"
+        },
+        {
+          "name": "tools/make_parquet_list.py",
+          "size": 5744,
+          "sha1": "485d2abc1e6962bc372d9ebe0e4eda97c082f9f2"
+        },
+        {
+          "name": "vllm_example.py",
+          "size": 1724,
+          "sha1": "697d7a9a3da606dc28816f676f3f3ed59a4ecdf8"
+        },
+        {
+          "name": "webui.py",
+          "size": 9678,
+          "sha1": "24b79513638d4a76033c4120459094d8638aa6cd"
+        }
+      ]
+    },
+    "matcha": {
+      "repo": "shivammehta25/Matcha-TTS",
+      "commit": "dd9105b34bf2be2230f4aa1e4769fb586a3c824e",
+      "destination": "third_party/cosyvoice/third_party/Matcha-TTS",
+      "files": [
+        {
+          "name": "LICENSE",
+          "size": 1069,
+          "sha1": "858018e750da7be7b271bb7307e68d159ed67ef6"
+        },
+        {
+          "name": "matcha/VERSION",
+          "size": 8,
+          "sha1": "442b1138f7851df1c22deb15fd5d6ff5b742e550"
+        },
+        {
+          "name": "matcha/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/app.py",
+          "size": 13992,
+          "sha1": "d68fbaa2d10d1faab606d89906af5e8b6baa5aa4"
+        },
+        {
+          "name": "matcha/cli.py",
+          "size": 15519,
+          "sha1": "579d7d636450a41f1c06a4393d64ddbae38c5011"
+        },
+        {
+          "name": "matcha/data/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/data/components/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/data/text_mel_datamodule.py",
+          "size": 7555,
+          "sha1": "704f93629f1874b88efd07609409653ffbb8338a"
+        },
+        {
+          "name": "matcha/hifigan/LICENSE",
+          "size": 1068,
+          "sha1": "91751daed806f63ac594cf077a3065f719a41662"
+        },
+        {
+          "name": "matcha/hifigan/README.md",
+          "size": 5570,
+          "sha1": "5db25850451a794b1db1b15b08e82c1d802edbb3"
+        },
+        {
+          "name": "matcha/hifigan/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/hifigan/config.py",
+          "size": 779,
+          "sha1": "b3abea9e151a08864353d32066bd4935e24b82e7"
+        },
+        {
+          "name": "matcha/hifigan/denoiser.py",
+          "size": 2644,
+          "sha1": "9fd33312a09b1940374a0e29a97fe3a1a1dac7d2"
+        },
+        {
+          "name": "matcha/hifigan/env.py",
+          "size": 429,
+          "sha1": "9ea4f948a3f002921bf9bc24f52cbc1c0b1fc2ec"
+        },
+        {
+          "name": "matcha/hifigan/meldataset.py",
+          "size": 6786,
+          "sha1": "8b43ea7965e04a52d5427a485ee911b743057c4a"
+        },
+        {
+          "name": "matcha/hifigan/models.py",
+          "size": 11668,
+          "sha1": "d209d9a4e99ec29e4167a5a2eaa62d72b3eff694"
+        },
+        {
+          "name": "matcha/hifigan/xutils.py",
+          "size": 1396,
+          "sha1": "eefadcb7a1d0bf9015e636b88fee3e22c9771bc5"
+        },
+        {
+          "name": "matcha/models/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/models/baselightningmodule.py",
+          "size": 7003,
+          "sha1": "3724888090e36b5f55445d33a87fcdae687b35a5"
+        },
+        {
+          "name": "matcha/models/components/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/models/components/decoder.py",
+          "size": 14459,
+          "sha1": "1137cd7008e9d07b4f306926a82e44c2b2cddbdf"
+        },
+        {
+          "name": "matcha/models/components/flow_matching.py",
+          "size": 4657,
+          "sha1": "5cad7431ef66a8d11da32a77c1af7f6e31d6b774"
+        },
+        {
+          "name": "matcha/models/components/text_encoder.py",
+          "size": 14845,
+          "sha1": "a388d05d6351fa2c9d9632fed0942d51fbec067b"
+        },
+        {
+          "name": "matcha/models/components/transformer.py",
+          "size": 13237,
+          "sha1": "dd1afa3aff5383912209e508676c6885e13ef4ee"
+        },
+        {
+          "name": "matcha/models/matcha_tts.py",
+          "size": 10059,
+          "sha1": "64b2c07fe8de4760aee1aed80d206112d30df55f"
+        },
+        {
+          "name": "matcha/onnx/__init__.py",
+          "size": 0,
+          "sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        {
+          "name": "matcha/onnx/export.py",
+          "size": 5386,
+          "sha1": "9b795086158e1ad8a4bb5cd92306f3fa765f71ea"
+        },
+        {
+          "name": "matcha/onnx/infer.py",
+          "size": 6293,
+          "sha1": "89ca92559c6df3776a07a038d7838242a3d19189"
+        },
+        {
+          "name": "matcha/text/__init__.py",
+          "size": 1696,
+          "sha1": "71a4b57891d3c06ad9f25493c1b40bc2f5962d17"
+        },
+        {
+          "name": "matcha/text/cleaners.py",
+          "size": 3560,
+          "sha1": "5e8d96b681eb9f57356a1b86a7008e74b65ff44b"
+        },
+        {
+          "name": "matcha/text/numbers.py",
+          "size": 2249,
+          "sha1": "f99a8686dcb73532091122613e74bd643a8a327f"
+        },
+        {
+          "name": "matcha/text/symbols.py",
+          "size": 635,
+          "sha1": "7018df549a1e50c3be20416069b6913c641024bd"
+        },
+        {
+          "name": "matcha/train.py",
+          "size": 4613,
+          "sha1": "d1d64c6c44af2622be5e6bf368616feb6619ed7e"
+        },
+        {
+          "name": "matcha/utils/__init__.py",
+          "size": 326,
+          "sha1": "074db6461184e8cbb86d977cb41d9ebd918e958a"
+        },
+        {
+          "name": "matcha/utils/audio.py",
+          "size": 2282,
+          "sha1": "0bcd74df47fb006f68deb5a5f4a4c2fb0aa84f57"
+        },
+        {
+          "name": "matcha/utils/generate_data_statistics.py",
+          "size": 3269,
+          "sha1": "96a5382296426803f1010385d184af7bfc901290"
+        },
+        {
+          "name": "matcha/utils/instantiators.py",
+          "size": 1828,
+          "sha1": "5547b4ed61ed8c21e63c528f58526a949879a94f"
+        },
+        {
+          "name": "matcha/utils/logging_utils.py",
+          "size": 1711,
+          "sha1": "1a12d1ddafa25ca3ae8e497bcd7de2191f13659b"
+        },
+        {
+          "name": "matcha/utils/model.py",
+          "size": 2935,
+          "sha1": "869cc6092f5952930534c47544fae88308e96abf"
+        },
+        {
+          "name": "matcha/utils/monotonic_align/__init__.py",
+          "size": 646,
+          "sha1": "eee6e0d47c2e3612ef02bc17442e6886998e5a94"
+        },
+        {
+          "name": "matcha/utils/monotonic_align/core.pyx",
+          "size": 1236,
+          "sha1": "091fcc3a50a51f3d3fee47a70825260757e6d885"
+        },
+        {
+          "name": "matcha/utils/monotonic_align/setup.py",
+          "size": 207,
+          "sha1": "f22bc6a35a5a04c9e6d7b82040973722c9b770c9"
+        },
+        {
+          "name": "matcha/utils/pylogger.py",
+          "size": 720,
+          "sha1": "61600678029362e110f655edb91d5f3bc5b1cd1c"
+        },
+        {
+          "name": "matcha/utils/rich_utils.py",
+          "size": 3279,
+          "sha1": "f602f6e9351d948946eb419eb4e420190ea634bc"
+        },
+        {
+          "name": "matcha/utils/utils.py",
+          "size": 7159,
+          "sha1": "af65e09070b4a4786ad139ec6e3d57d5ef578204"
+        },
+        {
+          "name": "pyproject.toml",
+          "size": 982,
+          "sha1": "74aa39300a61b8b3607dc634d68aa47013141ec5"
+        },
+        {
+          "name": "requirements.txt",
+          "size": 904,
+          "sha1": "3e14a532cb14f99190404472915213940bfad4b9"
+        },
+        {
+          "name": "setup.py",
+          "size": 1530,
+          "sha1": "80d4aac04c6cd36859c5d753468ef2e105770098"
+        }
+      ]
+    }
+  },
+  "models": {
+    "ditto": {
+      "repo": "digital-avatar/ditto-talkinghead",
+      "revision": "e4a2f60328ee7c32af585ac4b3cce299e4c8e254",
+      "host": "https://huggingface.co",
+      "destination": "models/ditto",
+      "files": [
+        {
+          "name": "ditto_cfg/v0.4_hubert_cfg_pytorch.pkl",
+          "size": 31002,
+          "sha256": "8e4c9ecb8dbb5aa4d22cb3f9b2c6ceabc62499b04af5fe074826d5b1044c4146"
+        },
+        {
+          "name": "ditto_pytorch/aux_models/2d106det.onnx",
+          "size": 5030888,
+          "sha256": "f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf"
+        },
+        {
+          "name": "ditto_pytorch/aux_models/det_10g.onnx",
+          "size": 16923827,
+          "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+        },
+        {
+          "name": "ditto_pytorch/aux_models/face_landmarker.task",
+          "size": 3758596,
+          "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
+        },
+        {
+          "name": "ditto_pytorch/aux_models/hubert_streaming_fix_kv.onnx",
+          "size": 1460740880,
+          "sha256": "04cd6c7c388aaf99cdea8d4599cefede9930e60d6051abd5a33c791aeb931697"
+        },
+        {
+          "name": "ditto_pytorch/aux_models/landmark203.onnx",
+          "size": 114666491,
+          "sha256": "31d22a5041326c31f19b78886939a634a5aedcaa5ab8b9b951a1167595d147db"
+        },
+        {
+          "name": "ditto_pytorch/models/appearance_extractor.pth",
+          "size": 3387959,
+          "sha256": "5279bb8654293dbdf327030b397f107237dd9212fb11dd75b83dfb635211ceb5"
+        },
+        {
+          "name": "ditto_pytorch/models/decoder.pth",
+          "size": 221813590,
+          "sha256": "4780afc7909a9f84e24c01d73b31a555ef651521a1fe3b2429bd04534d992aee"
+        },
+        {
+          "name": "ditto_pytorch/models/lmdm_v0.4_hubert.pth",
+          "size": 191247715,
+          "sha256": "40ef5aa80b76e9fc45a0f606cdd507bbeb09d3d078b016ac61fc47e369be8c94"
+        },
+        {
+          "name": "ditto_pytorch/models/motion_extractor.pth",
+          "size": 112545506,
+          "sha256": "251e6a94ad667a1d0c69526d292677165110ef7f0cf0f6d199f0e414e8aa0ca5"
+        },
+        {
+          "name": "ditto_pytorch/models/stitch_network.pth",
+          "size": 2393098,
+          "sha256": "3652d5a3f95099141a56986aaddec92fadf0a73c87a20fac9a2c07c32b28b611"
+        },
+        {
+          "name": "ditto_pytorch/models/warp_network.pth",
+          "size": 182180086,
+          "sha256": "2f61a6f265fe344f14132364859a78bdbbc2068577170693da57fb96d636e282"
+        }
+      ]
+    },
+    "cosyvoice": {
+      "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+      "revision": "29e01c4e8d000f4bcd70751be16fa94bf3d85a18",
+      "host": "https://huggingface.co",
+      "destination": "models/cosyvoice3",
+      "files": [
+        {
+          "name": "CosyVoice-BlankEN/config.json",
+          "size": 659,
+          "sha256": "168aa1bd401abc3bc262ba15ba4e499627a8b4e006e9d050b47c22de20660185",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Fconfig.json"
+        },
+        {
+          "name": "CosyVoice-BlankEN/generation_config.json",
+          "size": 242,
+          "sha256": "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Fgeneration_config.json"
+        },
+        {
+          "name": "CosyVoice-BlankEN/merges.txt",
+          "size": 1402109,
+          "sha256": "ac8ff86a72bee70828fbc1119bc4398c6f3a9a6e490d7b0dbe917be025478bd0",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Fmerges.txt"
+        },
+        {
+          "name": "CosyVoice-BlankEN/model.safetensors",
+          "size": 988097824,
+          "sha256": "130282af0dfa9fe5840737cc49a0d339d06075f83c5a315c3372c9a0740d0b96",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Fmodel.safetensors"
+        },
+        {
+          "name": "CosyVoice-BlankEN/tokenizer_config.json",
+          "size": 1287,
+          "sha256": "482bd979881423375ca5414e4e0d94cd7c5349dbb17fffd46b4d36d71e62a1bc",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Ftokenizer_config.json"
+        },
+        {
+          "name": "CosyVoice-BlankEN/vocab.json",
+          "size": 2776833,
+          "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=CosyVoice-BlankEN%2Fvocab.json"
+        },
+        {
+          "name": "campplus.onnx",
+          "size": 28303423,
+          "sha256": "a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=campplus.onnx"
+        },
+        {
+          "name": "config.json",
+          "size": 2,
+          "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        },
+        {
+          "name": "configuration.json",
+          "size": 47,
+          "sha256": "c502b6328c67638b401df8dd05de89e9e8d1cff9cd0ada10dfbdbe13556c20de",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=dde14de3f148d8558b476746fdd3af475abb9af0&FilePath=configuration.json"
+        },
+        {
+          "name": "cosyvoice3.yaml",
+          "size": 6934,
+          "sha256": "f5a6b2c6f05139d0f18861a1fe506f751e787026b77c05f7e8fef9f8a4405965",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=cosyvoice3.yaml"
+        },
+        {
+          "name": "flow.pt",
+          "size": 1329116148,
+          "sha256": "a6fab32a7825e5b0bc855ddd948f8db9370b0a786fbc249caa4595e95b608e4b",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=flow.pt"
+        },
+        {
+          "name": "hift.pt",
+          "size": 83202622,
+          "sha256": "b279d7641eb97ae55b3b540cfba4f953c26492a2df758328a89a4d007ab87a65",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=hift.pt"
+        },
+        {
+          "name": "llm.pt",
+          "size": 2024669519,
+          "sha256": "69f43bd545131c30e98947fb360ea8b4dc9916d8e83dded7757c7ea4f5a24970",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=2c1f17328e4c6885cfe24bf0581e305c4377195f&FilePath=llm.pt"
+        },
+        {
+          "name": "speech_tokenizer_v3.onnx",
+          "size": 969451503,
+          "sha256": "23236a74175dbdda47afc66dbadd5bcb41303c467a57c261cb8539ad9db9208d",
+          "url": "https://modelscope.cn/api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo?Revision=3a9eb0e104c9ce5bb7ef0af4ac86d9b79abc4029&FilePath=speech_tokenizer_v3.onnx"
+        }
+      ]
+    },
+    "llm": {
+      "repo": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+      "revision": "4f524e37fc494cea95ce8868029df33b64b0f67b",
+      "destination": "models/llm",
+      "files": [
+        {
+          "name": "qwen2.5-3b-instruct-q4_k_m.gguf",
+          "size": 2104932768,
+          "sha256": "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
+          "url": "https://modelscope.cn/api/v1/models/Qwen/Qwen2.5-3B-Instruct-GGUF/repo?Revision=4f524e37fc494cea95ce8868029df33b64b0f67b&FilePath=qwen2.5-3b-instruct-q4_k_m.gguf"
+        }
+      ]
+    },
+    "asr": {
+      "repo": "pengzhendong/faster-whisper-small",
+      "revision": "64d190b68b8763d051c645fb876ee6d41e73637b",
+      "destination": "models/asr/small",
+      "files": [
+        {
+          "name": "config.json",
+          "size": 2370,
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/faster-whisper-small/repo?Revision=64d190b68b8763d051c645fb876ee6d41e73637b&FilePath=config.json"
+        },
+        {
+          "name": "model.bin",
+          "size": 483546902,
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/faster-whisper-small/repo?Revision=64d190b68b8763d051c645fb876ee6d41e73637b&FilePath=model.bin"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 2203239,
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/faster-whisper-small/repo?Revision=64d190b68b8763d051c645fb876ee6d41e73637b&FilePath=tokenizer.json"
+        },
+        {
+          "name": "vocabulary.txt",
+          "size": 459861,
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/faster-whisper-small/repo?Revision=64d190b68b8763d051c645fb876ee6d41e73637b&FilePath=vocabulary.txt"
+        }
+      ]
+    },
+    "text_normalizer": {
+      "repo": "pengzhendong/wetext",
+      "revision": "b04bc07588601f7619b20efbb01cd1fa7278ccbc",
+      "destination": "models/text-normalizer",
+      "files": [
+        {
+          "name": "en/tn/tagger.fst",
+          "size": 5645674,
+          "sha256": "245e2dc9174cdd007a8e9e50f3339773d1adbbc7535b71cf67478dc1683cc3ec",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/wetext/repo?Revision=b04bc07588601f7619b20efbb01cd1fa7278ccbc&FilePath=en%2Ftn%2Ftagger.fst"
+        },
+        {
+          "name": "en/tn/verbalizer.fst",
+          "size": 6398822,
+          "sha256": "03155c88f317b2795969e264c19f87faf98b9853d5ac631e419bacdc3b3ee15a",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/wetext/repo?Revision=b04bc07588601f7619b20efbb01cd1fa7278ccbc&FilePath=en%2Ftn%2Fverbalizer.fst"
+        },
+        {
+          "name": "zh/tn/tagger.fst",
+          "size": 527178,
+          "sha256": "cf341314c51f7ce59049f3b2c42f0ce8fd71e6d08d4d6969613aad384a5e2ae8",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/wetext/repo?Revision=b04bc07588601f7619b20efbb01cd1fa7278ccbc&FilePath=zh%2Ftn%2Ftagger.fst"
+        },
+        {
+          "name": "zh/tn/verbalizer.fst",
+          "size": 1069758,
+          "sha256": "5a13cd679dd54637d12d2bd1bd33ee2165d91c867e14468c93195af02256e5da",
+          "url": "https://modelscope.cn/api/v1/models/pengzhendong/wetext/repo?Revision=b04bc07588601f7619b20efbb01cd1fa7278ccbc&FilePath=zh%2Ftn%2Fverbalizer.fst"
+        }
+      ]
+    }
+  }
+}

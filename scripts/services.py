@@ -26,30 +26,19 @@ def alive(record):
 
 
 def service_plan(root, studio_only=False):
-    avatar='/opt/digitalhuman/avatar/bin/python'
-    speech='/opt/digitalhuman/speech/bin/python'
-    services=[dict(name='studio',port=7860,cwd=root,command=[avatar,'-m','uvicorn','backend.api.app:app','--host','127.0.0.1','--port','7860'],health='/api/health')]
+    portrait='/opt/digitalhuman/portrait/bin/python'
+    voice='/opt/digitalhuman/emotional-voice/bin/python'
+    services=[dict(name='studio',port=7860,cwd=root,command=[portrait,'-m','uvicorn','backend.api.app:app','--host','127.0.0.1','--port','7860'],health='/api/health')]
     if studio_only:
         return services
-    import yaml
-    pretrained=root/'third_party/gpt_sovits/GPT_SoVITS/pretrained_models'
-    files={
-        't2s_weights_path':pretrained/'s1v3.ckpt',
-        'vits_weights_path':pretrained/'v2Pro/s2Gv2ProPlus.pth',
-        'bert_base_path':pretrained/'chinese-roberta-wwm-ext-large',
-        'cnhuhbert_base_path':pretrained/'chinese-hubert-base'}
-    for path in files.values():
-        if not path.exists(): raise FileNotFoundError(f'声音模型缺失: {path}')
-    voice_config=root/'.runtime/tts.yaml'
-    voice_config.write_text(yaml.safe_dump({'custom':{**{k:str(v) for k,v in files.items()},'device':'cpu','is_half':False,'version':'v2ProPlus'}}),encoding='utf-8')
     ggufs=list((root/'models/llm').glob('*q4_k_m.gguf'))
     if len(ggufs)!=1: raise FileNotFoundError('需要一个 Qwen2.5-3B Q4_K_M 模型')
     llama=Path('/opt/digitalhuman/llama.cpp/build/bin/llama-server')
     if not llama.is_file(): raise FileNotFoundError('llama-server 尚未编译')
     services=[
         dict(name='dialogue',port=8081,cwd=root,command=[str(llama),'-m',str(ggufs[0]),'--host','127.0.0.1','--port','8081','-ngl','0','-t','6','-c','4096','--alias','qwen2.5-3b-instruct'],health='/health'),
-        dict(name='voice',port=9880,cwd=root/'third_party/gpt_sovits',command=[speech,'api_v2.py','-a','127.0.0.1','-p','9880','-c',str(voice_config)],health='/docs'),
-        dict(name='expression',port=9881,cwd=root,command=[avatar,'-m','uvicorn','backend.avatar.a2e_service:app','--host','127.0.0.1','--port','9881'],health='/health'),
+        dict(name='voice',port=9880,cwd=root,command=[voice,'-m','uvicorn','backend.voice.service:app','--host','127.0.0.1','--port','9880'],health='/health'),
+        dict(name='portrait',port=9881,cwd=root,command=[portrait,'-m','uvicorn','backend.portrait.service:app','--host','127.0.0.1','--port','9881'],health='/health'),
         *services]
     for item in services:
         if not Path(item['command'][0]).is_file(): raise FileNotFoundError(item['command'][0])
@@ -62,6 +51,19 @@ def start(root, studio_only=False):
     registry=folder/'services.json'
     records=json.loads(registry.read_text()) if registry.exists() else {}
     plan=service_plan(root,studio_only)
+    expected={item['name']:item['command'] for item in plan}
+    if studio_only:
+        for name,environment,module,port in [
+                ('voice','emotional-voice','backend.voice.service:app','9880'),
+                ('portrait','portrait','backend.portrait.service:app','9881')]:
+            expected[name]=[f'/opt/digitalhuman/{environment}/bin/python','-m','uvicorn',module,
+                            '--host','127.0.0.1','--port',port]
+        expected['dialogue']=['/opt/digitalhuman/llama.cpp/build/bin/llama-server','-m',
+            str(root/'models/llm/qwen2.5-3b-instruct-q4_k_m.gguf'),'--host','127.0.0.1',
+            '--port','8081','-ngl','0','-t','6','-c','4096','--alias','qwen2.5-3b-instruct']
+    for name,record in records.items():
+        if alive(record) and (name not in expected or record.get('command')!=expected[name]):
+            raise RuntimeError(f'{name} 仍在运行旧配置。请先运行 scripts/stop.ps1，再运行 scripts/start.ps1。')
     for item in plan:
         if alive(records.get(item['name'],{'pid':-1})): continue
         with socket.socket() as sock:
@@ -69,10 +71,10 @@ def start(root, studio_only=False):
                 raise RuntimeError(f"端口 {item['port']} 已被其他进程使用。未停止该进程。")
     env={**os.environ,'DIGITAL_HUMAN_ROOT':str(root),'PYTHONPATH':str(root),
          'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HOME':str(root/'.runtime/hf'),
-         'TORCH_HOME':str(root/'.runtime/torch'),'CUDA_HOME':'/usr/local/cuda-12.1',
+         'TORCH_HOME':str(root/'.runtime/torch'),
          'TORCHDYNAMO_DISABLE':'0','TORCHINDUCTOR_CACHE_DIR':str(root/'.runtime/cache/inductor'),
-         'TOKENIZERS_PARALLELISM':'false','OMP_NUM_THREADS':'4','NLTK_DATA':str(root/'models/nltk_data')}
-    env['PATH']='/usr/local/cuda-12.1/bin:/usr/lib/wsl/lib:'+env.get('PATH','')
+         'TOKENIZERS_PARALLELISM':'false','OMP_NUM_THREADS':'4'}
+    env['PATH']='/usr/lib/wsl/lib:'+env.get('PATH','')
     launched=[]
     try:
         for item in plan:

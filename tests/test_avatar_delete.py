@@ -2,13 +2,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from backend.api.app import create_app
-from backend.avatar.lease import GpuLease
+from backend.gpu import GpuLease
 
 
 def imported(client,name='人物'):
     response=client.post('/api/avatars/import',data={'name':name},files=[
-        ('video',('video.mp4',b'original-video','video/mp4')),
-        ('body_photos',('body.png',b'original-photo','image/png'))])
+        ('voice_video',('video.mp4',b'original-video','video/mp4')),
+        ('photo',('body.png',b'original-photo','image/png'))])
     assert response.status_code==201
     return response.json()['avatar_id']
 
@@ -27,7 +27,7 @@ def test_delete_removes_only_selected_person_and_reassigns_default(tmp_path):
         assert [a['id'] for a in client.get('/api/avatars').json()]==[second]
         assert marker.read_text().strip()==second
         assert shared.read_bytes()==b'shared-model'
-        assert (tmp_path/'data/avatars'/second/'source/video.mp4').read_bytes()==b'original-video'
+        assert (tmp_path/'data/avatars'/second/client.get('/api/avatars/'+second).json()['voice_video']).read_bytes()==b'original-video'
         assert client.delete('/api/avatars/'+first).status_code==404
 
 
@@ -36,7 +36,7 @@ def test_delete_last_person_clears_default_and_keeps_external_originals(tmp_path
     root=tmp_path/'project';source=tmp_path/'originals';source.mkdir()
     video=source/'clip.mp4';video.write_bytes(b'private-original')
     photo=source/'body.png';photo.write_bytes(b'original-photo')
-    avatar=Store(root).import_files('人物',video,[photo],[])
+    avatar=Store(root).import_photo('人物',photo,video)
     marker=root/'.runtime/default_avatar.txt';marker.parent.mkdir();marker.write_text(avatar['id'])
     with TestClient(create_app(root)) as client:
         assert client.delete('/api/avatars/'+avatar['id']).status_code==200
@@ -57,30 +57,12 @@ def test_delete_rejects_gpu_operations_started_by_other_processes(tmp_path):
         assert client.delete('/api/avatars/'+avatar_id).status_code==200
 
 
-def test_delete_rejects_queued_or_running_api_build(tmp_path,monkeypatch):
-    import threading
-    from backend.pipeline import build
-    entered=threading.Event();release=threading.Event();finished=threading.Event()
-    def slow_build(*args):
-        entered.set()
-        try:release.wait(5)
-        finally:finished.set()
-    monkeypatch.setattr(build,'build_avatar',slow_build)
-    with TestClient(create_app(tmp_path)) as client:
-        avatar_id=imported(client)
-        try:
-            assert client.post(f'/api/avatars/{avatar_id}/build',json={'stage':'prepare'}).status_code==202
-            assert entered.wait(2)
-            assert client.delete('/api/avatars/'+avatar_id).status_code==409
-            assert client.get('/api/avatars/'+avatar_id).status_code==200
-        finally:
-            release.set();assert finished.wait(2)
 
 
 def test_delete_refuses_avatar_directory_link_to_external_data(tmp_path):
     from backend.storage import atomic_json
     root=tmp_path/'project';outside=tmp_path/'external';outside.mkdir()
-    atomic_json(outside/'avatar.json',{'id':'linked','name':'外部目录','status':'imported'})
+    atomic_json(outside/'avatar.json',{'schema_version':2,'mode':'photo','id':'linked','name':'外部目录','status':'imported'})
     keep=outside/'important.bin';keep.write_bytes(b'do-not-delete')
     base=root/'data/avatars';base.mkdir(parents=True)
     try:(base/'linked').symlink_to(outside,target_is_directory=True)
