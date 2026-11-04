@@ -6,9 +6,11 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
+from backend import clock
 from backend.storage import atomic_json
 
 
@@ -55,6 +57,37 @@ def service_plan(root, studio_only=False):
     return services
 
 
+def _listening(port):
+    with socket.socket() as sock:
+        return sock.connect_ex(('127.0.0.1',port))==0
+
+
+def _check_health(item,timeout=2):
+    # Cold workers are healthy without loaded models. Only these loopback
+    # checks bypass proxies; model downloads keep their network settings.
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{item['port']}{item['health']}",timeout=timeout) as response:
+        if response.status!=200:raise OSError(f'健康接口返回 {response.status}')
+
+
+def _rollback_started(registry,records,launched):
+    for name,proc,item in reversed(launched):
+        try:
+            # A live unreaped child cannot have its PID reused. Keep its
+            # handle even when persisting the ownership record fails.
+            if proc.poll() is None:os.killpg(proc.pid,signal.SIGTERM)
+            deadline=clock.monotonic()+20
+            while proc.poll() is None or _listening(item['port']):
+                if clock.monotonic()>=deadline:raise TimeoutError('进程或端口未在20秒内释放')
+                time.sleep(.1)
+            records.pop(name,None)
+        except BaseException as error:
+            print(f"{name}: 回收失败，PID={proc.pid}，命令={item['command']}：{error}",file=sys.stderr)
+    if launched:
+        try:atomic_json(registry,records)
+        except BaseException as error:print(f'服务登记回滚失败：{error}',file=sys.stderr)
+
+
 def start(root, studio_only=False):
     folder=root/'.runtime'
     folder.mkdir(exist_ok=True)
@@ -70,10 +103,12 @@ def start(root, studio_only=False):
         if alive(record) and (name not in expected or record.get('command')!=expected[name]):
             raise RuntimeError(f'{name} 仍在运行旧配置。请先运行 scripts/stop.ps1，再运行 scripts/start.ps1。')
     for item in plan:
-        if alive(records.get(item['name'],{'pid':-1})): continue
-        with socket.socket() as sock:
-            if sock.connect_ex(('127.0.0.1',item['port']))==0:
-                raise RuntimeError(f"端口 {item['port']} 已被其他进程使用。未停止该进程。")
+        if alive(records.get(item['name'],{'pid':-1})):
+            try:_check_health(item)
+            except OSError as error:raise RuntimeError(f"{item['name']} 进程存在但健康检查失败：{error}") from error
+            continue
+        if _listening(item['port']):
+            raise RuntimeError(f"端口 {item['port']} 已被其他进程使用。未停止该进程。")
     env={**os.environ,'DIGITAL_HUMAN_ROOT':str(root),'PYTHONPATH':str(root),
          'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HOME':str(root/'.runtime/hf'),
          'TORCH_HOME':str(root/'.runtime/torch'),
@@ -90,21 +125,23 @@ def start(root, studio_only=False):
             with log.open('ab') as output:
                 proc=subprocess.Popen(item['command'],cwd=item['cwd'],env=env,stdin=subprocess.DEVNULL,
                         stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
-            records[name]={'pid':proc.pid,'start_ticks':identity(proc.pid),'port':item['port'],'command':item['command']}
+                record={'pid':proc.pid,'port':item['port'],'command':item['command']}
+                launched.append((name,proc,record))
+                records[name]=record
+                record['start_ticks']=identity(proc.pid)
             atomic_json(registry,records)
-            launched.append(name)
-            deadline=time.monotonic()+180
-            while time.monotonic()<deadline:
+            deadline=clock.monotonic()+180
+            while clock.monotonic()<deadline:
                 if proc.poll() is not None: raise RuntimeError(f'{name} 启动失败。请查看 {log}')
                 try:
-                    with urllib.request.urlopen(f"http://127.0.0.1:{item['port']}{item['health']}",timeout=2) as response:
-                        if response.status==200: break
+                    _check_health(item,timeout=min(2,max(.001,deadline-clock.monotonic())))
+                    break
                 except OSError:
                     time.sleep(.5)
             else: raise TimeoutError(f'{name} 未在180秒内就绪。请查看 {log}')
             print(f'{name}: ready on 127.0.0.1:{item["port"]}',flush=True)
-    except Exception:
-        stop(root,launched)
+    except BaseException:
+        _rollback_started(registry,records,launched)
         raise
     print('Open http://localhost:7860',flush=True)
 
@@ -120,12 +157,12 @@ def stop(root, selected=None):
             except ProcessLookupError:
                 pass
             print(f'{name}: stop requested',flush=True)
-            deadline=time.monotonic()+20
+            deadline=clock.monotonic()+20
             while True:
                 with socket.socket() as sock:
                     listening=sock.connect_ex(('127.0.0.1',item['port']))==0
                 if not alive(item) and not listening: break
-                if time.monotonic()>=deadline:
+                if clock.monotonic()>=deadline:
                     raise TimeoutError(f'{name} 未在20秒内退出或释放端口。已保留管理记录，请稍后重试。')
                 time.sleep(.1)
         records.pop(name)

@@ -48,7 +48,7 @@ def test_stop_timeout_keeps_ownership_for_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(services.os, 'killpg', lambda *args: None, raising=False)
     monkeypatch.setattr(services.socket.socket, 'connect_ex', lambda *args: 0)
     clock = iter([0, 60, 120, 180])
-    monkeypatch.setattr(services.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(services.clock, 'monotonic', lambda: next(clock))
     monkeypatch.setattr(services.time, 'sleep', lambda _: None)
     with pytest.raises(TimeoutError, match='voice'):
         services.stop(tmp_path, ['voice'])
@@ -83,3 +83,21 @@ def test_stop_never_signals_reused_foreign_pid(tmp_path, monkeypatch):
     monkeypatch.setattr(services.os, 'killpg', lambda *args: pytest.fail('signalled a foreign process'), raising=False)
     services.stop(tmp_path, ['voice'])
     assert json.loads(path.read_text()) == {}
+
+
+def test_stop_deadline_uses_raw_clock_when_adjusted_clock_is_frozen(tmp_path,monkeypatch):
+    from backend import clock
+    registry(tmp_path)
+    monkeypatch.setattr(services,'alive',lambda _:True)
+    monkeypatch.setattr(services.os,'killpg',lambda *a:None,raising=False)
+    monkeypatch.setattr(services.socket.socket,'connect_ex',lambda *a:0)
+    ticks=iter([0,21])
+    monkeypatch.setattr(clock,'monotonic',lambda:next(ticks))
+    monkeypatch.setattr(services.time,'monotonic',lambda:0.)
+    waits=[]
+    def wait(_):
+        waits.append(True)
+        assert len(waits)<3,'Stop deadline followed the frozen adjusted clock'
+    monkeypatch.setattr(services.time,'sleep',wait)
+    with pytest.raises(TimeoutError,match='studio|voice'):
+        services.stop(tmp_path)

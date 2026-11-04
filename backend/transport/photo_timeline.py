@@ -84,6 +84,7 @@ class PhotoTimeline:
     def __init__(self,idle,*,idle_video=None):
         self.idle=np.asarray(idle,np.uint8);self._queue=deque();self._current=None;self._video=None
         self._cursor=0;self._video_seconds=0.;self._pts=0;self._generation=0;self._lock=threading.RLock()
+        self._decode_lock=threading.Lock();self._readers={};self._retired=set()
         self._idle_video=IdleFrames(idle_video) if idle_video is not None else None
         self._idle_started=clock.monotonic()
 
@@ -93,25 +94,34 @@ class PhotoTimeline:
     def current(self,generation):
         with self._lock:return self._generation==generation
 
+    def _retire(self,clips):
+        close=[]
+        for clip in set(clips)-{None}:
+            if self._readers.get(clip,0):self._retired.add(clip)
+            else:close.append(clip)
+        return close
+
     def interrupt(self):
         with self._lock:
-            clips=[*self._queue,self._current,self._video]
+            close=self._retire([*self._queue,self._current,self._video])
             self._generation+=1;self._queue.clear();self._current=self._video=None;self._cursor=0
-            for clip in clips:
-                if clip is not None:clip.close()
+        for clip in close:clip.close()
 
     def append(self,generation,clip):
         with self._lock:
-            if not self.current(generation):clip.close();return False
-            if len(self._queue)>=2:raise BufferError('待播队列已满')
-            self._queue.append(clip);return True
+            if self.current(generation):
+                if len(self._queue)>=2:raise BufferError('待播队列已满')
+                self._queue.append(clip);return True
+        clip.close();return False
 
     def read_audio(self,count):
+        close=[]
         with self._lock:
             output=np.zeros(count,np.float32);written=0
             while written<count:
                 if self._current is None:
-                    if self._video is not None:self._video.close();self._video=None
+                    if self._video is not None:
+                        close.extend(self._retire([self._video]));self._video=None
                     if not self._queue:break
                     self._current=self._queue.popleft();self._video=self._current;self._cursor=0
                 clip=self._current
@@ -120,20 +130,32 @@ class PhotoTimeline:
                 self._cursor+=length;written+=length;self._video_seconds=self._cursor/48000
                 if self._cursor==len(clip.pcm):self._current=None
             pts=self._pts;self._pts+=count
-            return output,pts
+        for clip in close:clip.close()
+        return output,pts
 
     def image(self):
-        with self._lock:
-            if self._video is not None:return self._video.video.at(self._video_seconds)
-            if self._idle_video is not None:
-                return self._idle_video.at((clock.monotonic()-self._idle_started)%(self._idle_video.duration or 4.))
-            return self.idle
+        return self.video_frame()[0]
 
     def video_frame(self):
-        # Snapshot the selected picture and its PCM clock under the same lock.
-        # Decoder completion time is not the picture's presentation time.
         with self._lock:
-            return self.image(), self._pts
+            clip=self._video;seconds=self._video_seconds;pts=self._pts
+            if clip is None:
+                if self._idle_video is not None:
+                    image=self._idle_video.at((clock.monotonic()-self._idle_started)%(self._idle_video.duration or 4.))
+                    return image,pts
+                return self.idle,pts
+            # Keep the reader alive while decoding outside the PCM clock lock.
+            self._readers[clip]=self._readers.get(clip,0)+1
+        try:
+            with self._decode_lock:return clip.video.at(seconds),pts
+        finally:
+            close=False
+            with self._lock:
+                self._readers[clip]-=1
+                if not self._readers[clip]:
+                    del self._readers[clip]
+                    if clip in self._retired:self._retired.remove(clip);close=True
+            if close:clip.close()
 
     @property
     def busy(self):

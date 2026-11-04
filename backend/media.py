@@ -1,5 +1,7 @@
 """Audio-track ingestion. Video frames never enter the photo animation path."""
 import wave
+import os
+import uuid
 from pathlib import Path
 import av
 import numpy as np
@@ -8,13 +10,24 @@ from backend.storage import sha256
 from backend.photo_profiles import migrate_profile, source_path
 
 
-def read_audio(path, rate=16000):
+REFERENCE_AUDIO_MAX_SECONDS = 600
+
+
+def read_audio(path, rate=16000, *, max_samples=None):
     chunks=[];resampler=av.AudioResampler(format='fltp',layout='mono',rate=rate)
+    samples=0
+    def append(frames):
+        nonlocal samples
+        for out in frames:
+            if max_samples is not None and samples+out.samples>max_samples:
+                raise PipelineError('audio','音轨解码采样超过上限，请提供不超过十分钟的声音视频')
+            samples+=out.samples
+            chunks.append(out.to_ndarray().reshape(-1))
     with av.open(str(path)) as container:
         if not container.streams.audio:raise PipelineError('audio','视频中没有音轨')
         for frame in container.decode(audio=0):
-            chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(frame))
-        chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(None))
+            append(resampler.resample(frame))
+        append(resampler.resample(None))
     if not chunks:raise PipelineError('audio','音轨无法解码')
     return np.concatenate(chunks).astype(np.float32),rate
 
@@ -53,8 +66,13 @@ def prepare_voice(store, avatar_id):
     if (voice.get('source_sha256')==digest and target.is_file()
             and voice.get('reference_sha256')==sha256(target)):return manifest
     previous_hash=sha256(target) if target.is_file() else None
-    pcm,rate=read_audio(video);start,duration=choose_reference(pcm,rate)
-    write_wav(target,pcm[int(start*rate):int((start+duration)*rate)],rate)
+    pcm,rate=read_audio(video,max_samples=16000*REFERENCE_AUDIO_MAX_SECONDS)
+    start,duration=choose_reference(pcm,rate)
+    temporary=target.with_name('.reference-'+uuid.uuid4().hex+'.wav')
+    try:
+        write_wav(temporary,pcm[int(start*rate):int((start+duration)*rate)],rate)
+        os.replace(temporary,target)
+    finally:temporary.unlink(missing_ok=True)
     # A legacy confirmation is retained only if the extracted waveform matches.
     confirmed=(bool(voice.get('confirmed')) and previous_hash==sha256(target)
                and voice.get('start_seconds')==start and voice.get('duration_seconds')==duration)

@@ -73,6 +73,167 @@ def clients(instance, text='你好！', emotion='happy', render=None):
     return calls
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('closing',[False,True])
+async def test_interrupt_or_close_cancels_pending_dialogue_request(tmp_path,closing):
+    instance,events=session(tmp_path)
+    clients(instance)
+    entered=asyncio.Event();release=asyncio.Event();cancelled=asyncio.Event()
+    async def answer(text,history):
+        entered.set()
+        try:await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set();raise
+        return '这条旧回答不应播放。'
+    instance.dialogue.answer=answer
+    instance.message(json.dumps({'type':'chat_text','text':'旧问题'}))
+    try:
+        await asyncio.wait_for(entered.wait(),2)
+        if closing:await asyncio.wait_for(instance.close(),.5)
+        else:instance.interrupt()
+        await asyncio.wait_for(cancelled.wait(),.5)
+        assert not instance._model_tasks
+        assert not any(event.get('role')=='assistant' for event in events)
+    finally:
+        release.set();await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_old_dialogue_allows_next_question_on_same_session(tmp_path):
+    instance,events=session(tmp_path)
+    clients(instance,text='新回答。')
+    normal=instance.dialogue.answer
+    entered,cancelled=asyncio.Event(),asyncio.Event()
+    async def answer(text,history):
+        if text=='旧问题':
+            entered.set()
+            try:await asyncio.Event().wait()
+            except asyncio.CancelledError:cancelled.set();raise
+        return await normal(text,history)
+    instance.dialogue.answer=answer
+    try:
+        instance.message(json.dumps({'type':'chat_text','text':'旧问题'}))
+        await asyncio.wait_for(entered.wait(),2)
+        instance.message(json.dumps({'type':'chat_text','text':'新问题'}))
+        await asyncio.wait_for(cancelled.wait(),.5)
+        async def consume():
+            while True:
+                instance.timeline.read_audio(960)
+                await asyncio.sleep(.005)
+        consuming=asyncio.create_task(consume())
+        try:await until(lambda:any(e['type']=='turn_complete' for e in events))
+        finally:consuming.cancel();await asyncio.gather(consuming,return_exceptions=True)
+        assert instance.history==[{'role':'user','content':'新问题'},
+                                  {'role':'assistant','content':'新回答。'}]
+        assert [e['text'] for e in events if e.get('role')=='assistant']==['新回答。']
+        assert not instance._model_tasks
+    finally:await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('input_kind',['text','audio'])
+async def test_turn_timing_keeps_original_input_start_and_first_sentence_costs(tmp_path,monkeypatch,input_kind):
+    from backend.transport import photo_session
+    instance,events=session(tmp_path)
+    clients(instance,text='第一句。第二句。')
+    now=[100.]
+    monkeypatch.setattr(photo_session,'clock',SimpleNamespace(monotonic=lambda:now[0],source_name=lambda:'test'))
+    original_answer,original_voice,original_portrait=instance.dialogue.answer,instance.voice.synthesize,instance.portrait.animate
+    voice_calls=[];portrait_calls=[]
+    async def answer(*args):now[0]+=.1;return await original_answer(*args)
+    async def voice(*args,**kwargs):
+        voice_calls.append(True);now[0]+=.2*len(voice_calls)
+        return await original_voice(*args,**kwargs)
+    async def portrait(*args,**kwargs):
+        portrait_calls.append(True);now[0]+=.3*len(portrait_calls)
+        return await original_portrait(*args,**kwargs)
+    def transcribe(audio):now[0]+=.25;return '语音问题'
+    instance.dialogue.answer=answer;instance.dialogue.transcribe=transcribe
+    instance.voice.synthesize=voice;instance.portrait.animate=portrait
+    try:
+        if input_kind=='audio':
+            instance.recording=True;instance.recorded=[np.ones(3200,np.float32)]
+            instance.message(json.dumps({'type':'stop_recording'}))
+        else:instance.message(json.dumps({'type':'chat_text','text':'文字问题'}))
+        await until(lambda:instance.timeline.queue_depth==2)
+        running=instance.metrics['last_turn_timing']
+        assert running['input_kind']==input_kind and running['status']=='running'
+        assert running['asr_ms']==(pytest.approx(250) if input_kind=='audio' else None)
+        assert running['llm_ms']==pytest.approx(100)
+        assert running['tts_first_ms']==pytest.approx(200)
+        assert running['portrait_first_ms']==pytest.approx(300)
+        assert running['first_enqueue_ms']==pytest.approx(850 if input_kind=='audio' else 600)
+        assert running['total_ms'] is None
+        instance.timeline.read_audio(9600);now[0]+=.4
+        await until(lambda:any(event['type']=='turn_complete' for event in events))
+        completed=instance.metrics['last_turn_timing']
+        assert completed['status']=='completed' and completed['total_ms']==pytest.approx(2250 if input_kind=='audio' else 2000)
+        assert running['status']=='running','Returned metrics must be a snapshot'
+    finally:await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_timing_marks_failure_without_inventing_completed_phase(tmp_path,monkeypatch):
+    from backend.transport import photo_session
+    instance,events=session(tmp_path);now=[10.]
+    clients(instance)
+    monkeypatch.setattr(photo_session,'clock',SimpleNamespace(monotonic=lambda:now[0],source_name=lambda:'test'))
+    async def answer(*args):now[0]+=.3;raise RuntimeError('dialogue failed')
+    instance.dialogue.answer=answer
+    try:
+        instance.message(json.dumps({'type':'chat_text','text':'问题'}))
+        await until(lambda:any(event['type']=='error' for event in events))
+        timing=instance.metrics['last_turn_timing']
+        assert timing['status']=='failed' and timing['total_ms']==pytest.approx(300)
+        assert timing['llm_ms'] is None and timing['first_enqueue_ms'] is None
+    finally:await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_late_cancelled_turn_cannot_overwrite_new_turn_timing(tmp_path,monkeypatch):
+    from backend.transport import photo_session
+    instance,events=session(tmp_path);now=[10.]
+    clients(instance)
+    monkeypatch.setattr(photo_session,'clock',SimpleNamespace(monotonic=lambda:now[0],source_name=lambda:'test'))
+    entered,release=asyncio.Event(),asyncio.Event()
+    normal=instance.dialogue.answer
+    async def answer(text,history):
+        if text=='旧问题':
+            entered.set()
+            try:await release.wait()
+            except asyncio.CancelledError:await release.wait()
+        return await normal(text,history)
+    instance.dialogue.answer=answer
+    try:
+        instance.message(json.dumps({'type':'chat_text','text':'旧问题'}))
+        await asyncio.wait_for(entered.wait(),2)
+        now[0]+=.2;instance.interrupt()
+        old=instance.metrics['last_turn_timing']
+        assert old['status']=='interrupted' and old['total_ms']==pytest.approx(200)
+        instance.message(json.dumps({'type':'chat_text','text':'新问题'}))
+        current_generation=instance.generation
+        release.set();await until(lambda:instance.timeline.queue_depth==1)
+        timing=instance.metrics['last_turn_timing']
+        assert timing['generation']==current_generation and timing['status']=='running'
+        assert len([e for e in events if e.get('role')=='assistant'])==1
+    finally:release.set();await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind',['text','audio'])
+async def test_stale_response_entry_cannot_replace_current_timing(tmp_path,kind):
+    instance,events=session(tmp_path);clients(instance)
+    try:
+        old_generation=instance.generation
+        instance.interrupt()
+        instance._begin_timing(instance.generation,'text',instance.last_active)
+        expected=instance.metrics['last_turn_timing']
+        if kind=='text':await instance.respond('过期问题',old_generation)
+        else:await instance.respond_audio(np.zeros(3200),old_generation)
+        assert instance.metrics['last_turn_timing']==expected
+    finally:await instance.close()
+
+
 def test_constructor_works_without_running_event_loop(tmp_path):
     instance, _ = session(tmp_path)
     assert instance.timeline.image()[0, 0, 0] == 70

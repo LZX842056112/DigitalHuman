@@ -361,14 +361,14 @@ async def test_interrupt_during_decode_retries_without_spending_next_frame_perio
     instance = session()
     calls = 0
 
-    def image():
+    def video_frame():
         nonlocal calls
         calls += 1
         if calls == 1:
             instance.generation += 1
-        return np.full((16, 16, 3), calls, np.uint8)
+        return np.full((16, 16, 3), calls, np.uint8), 0
 
-    instance.timeline.image = image
+    instance.timeline.video_frame = video_frame
     track = PhotoVideoTrack(instance, 1)
     try:
         frame = await asyncio.wait_for(track.recv(), timeout=.5)
