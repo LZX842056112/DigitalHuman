@@ -59,6 +59,7 @@ def test_studio_only_checks_running_workers_with_the_same_commands(tmp_path, mon
     registry = folder/'services.json'
     registry.write_text(json.dumps(records))
     monkeypatch.setattr(services, 'alive', lambda record: record.get('pid') == 1)
+    monkeypatch.setattr(services, '_check_health', lambda item,timeout=2: None)
     monkeypatch.setattr(services.subprocess, 'Popen', lambda *a, **k: pytest.fail('launched a process'))
     monkeypatch.setattr(Path, 'glob', lambda *a: pytest.fail('checked LLM model availability'))
     monkeypatch.setattr(Path, 'is_file', lambda *a: pytest.fail('checked worker executable availability'))

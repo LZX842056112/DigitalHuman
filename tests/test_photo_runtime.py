@@ -230,6 +230,7 @@ def test_studio_only_does_not_reject_current_photo_workers(tmp_path,monkeypatch)
     (folder/'services.json').write_text(json.dumps({
         'studio':{'pid':1,'command':studio},'voice':{'pid':2,'command':voice}}))
     monkeypatch.setattr(services,'alive',lambda record:record.get('pid') in {1,2})
+    monkeypatch.setattr(services,'_check_health',lambda item,timeout=2:None)
     monkeypatch.setattr(services,'service_plan',lambda *_:[{'name':'studio','command':studio,'port':7860}])
     monkeypatch.setattr(services.subprocess,'Popen',lambda *a,**k:pytest.fail('already running'))
     services.start(tmp_path,studio_only=True)

@@ -53,6 +53,8 @@ class PhotoSession:
         self._close_lock = None
         self._close_task = None
         self._stats = {'turns': 0, 'sentences': 0}
+        self._timing = None
+        self._timing_started = None
         self._save_generation()
 
     @property
@@ -66,7 +68,27 @@ class PhotoSession:
                 'video_queue_depth': self.video_queue_depth, 'video_frames_dropped': self.video_frames_dropped,
                 'video_drop_reasons': dict(getattr(self.video_track, 'drop_reasons', {})),
                 'recording': self.recording, 'recorded_samples': self.recorded_samples,
+                'last_turn_timing': dict(self._timing) if self._timing is not None else None,
                 'seconds': clock.monotonic() - self.started}
+
+    def _begin_timing(self, generation, input_kind, started):
+        if not self._current(generation):
+            return
+        self._timing_started = started
+        self._timing = dict.fromkeys(('asr_ms', 'llm_ms', 'tts_first_ms',
+            'portrait_first_ms', 'first_enqueue_ms', 'total_ms'))
+        self._timing.update(generation=generation, input_kind=input_kind, status='running')
+
+    def _phase_timing(self, generation, phase, started):
+        if (self._timing is not None and self._timing['generation'] == generation
+                and self._timing['status'] == 'running'):
+            self._timing[phase] = max(0., (clock.monotonic() - started) * 1000)
+
+    def _finish_timing(self, generation, status):
+        if (self._timing is not None and self._timing['generation'] == generation
+                and self._timing['status'] == 'running'):
+            self._phase_timing(generation, 'total_ms', self._timing_started)
+            self._timing['status'] = status
 
     def _save_generation(self):
         atomic_json(self.folder / 'generation.json', {'generation': self._generation, 'closed': self.closed})
@@ -120,6 +142,7 @@ class PhotoSession:
         return task
 
     def _invalidate(self):
+        self._finish_timing(self._generation, 'interrupted')
         self._generation = self.timeline.begin_turn()
         self._save_generation()
         if self.video_track is not None:
@@ -157,6 +180,7 @@ class PhotoSession:
                 if not text:
                     raise ValueError('请输入文字')
                 self.interrupt()
+                self._begin_timing(self._generation, 'text', self.last_active)
                 self._start(self.respond(text, self._generation))
             elif kind == 'start_recording':
                 self.interrupt()
@@ -168,9 +192,11 @@ class PhotoSession:
                 audio = np.concatenate(self.recorded) if self.recorded else np.zeros(0, np.float32)
                 self.recorded = []
                 self.recorded_samples = 0
+                self._begin_timing(self._generation, 'audio', self.last_active)
                 if len(audio) >= 3200:
                     self._start(self.respond_audio(audio, self._generation))
                 else:
+                    self._finish_timing(self._generation, 'completed')
                     self.emit('status', text='未检测到语音')
                     self.emit('turn_complete', generation=self._generation, seconds=0.)
             else:
@@ -211,21 +237,32 @@ class PhotoSession:
             raise
 
     async def respond_audio(self, audio, generation=None):
+        if self.closed:
+            return
         generation = self._invalidate() if generation is None else generation
+        if not self._current(generation):
+            return
+        if self._timing is None or self._timing['generation'] != generation:
+            self._begin_timing(generation, 'audio', clock.monotonic())
         try:
             self.emit('status', text='正在识别语音')
+            phase_started = clock.monotonic()
             text = await self._model(asyncio.to_thread(self.dialogue.transcribe, audio), generation)
+            self._phase_timing(generation, 'asr_ms', phase_started)
             if not self._current(generation):
                 return
             if not text:
+                self._finish_timing(generation, 'completed')
                 self.emit('status', text='未检测到语音')
                 self.emit('turn_complete', generation=generation, seconds=0.)
                 return
             await self.respond(text, generation)
         except asyncio.CancelledError:
+            self._finish_timing(generation, 'interrupted')
             raise
         except Exception as exc:
             if self._current(generation):
+                self._finish_timing(generation, 'failed')
                 self._invalidate()
                 self.emit('error', text=str(exc))
 
@@ -234,12 +271,16 @@ class PhotoSession:
             return
         generation = self._invalidate() if generation is None else generation
         started = clock.monotonic()
+        if self._timing is None or self._timing['generation'] != generation:
+            self._begin_timing(generation, 'text', started)
         try:
             if not self._current(generation):
                 return
             self.emit('transcript', role='user', text=text)
             self.emit('status', text='正在生成回答')
-            reply = parse_reply(await self._model(self.dialogue.answer(text, list(self.history)), generation))
+            phase_started = clock.monotonic()
+            reply = parse_reply(await self.dialogue.answer(text, list(self.history)))
+            self._phase_timing(generation, 'llm_ms', phase_started)
             if not self._current(generation):
                 return
             self.emit('transcript', role='assistant', text=reply.text)
@@ -256,14 +297,20 @@ class PhotoSession:
                 self.emit('status', text='正在生成声音和画面')
                 audio, video = sentence_paths(self.root, self.id, generation, index)
                 self._owned_paths.setdefault(generation, set()).update((audio, video))
+                phase_started = clock.monotonic()
                 pcm, rate = await self._model(self.voice.synthesize(sentence.strip(), self.avatar_dir,
                     self.manifest['voice'], emotion=reply.emotion, session_id=self.id, generation=generation), generation)
+                if index == 0:
+                    self._phase_timing(generation, 'tts_first_ms', phase_started)
                 if not self._current(generation):
                     return
                 await self._model(asyncio.to_thread(write_wav, audio, pcm, rate), generation)
                 if not self._current(generation):
                     return
+                phase_started = clock.monotonic()
                 await self._model(self.portrait.animate(self.manifest['id'], self.id, generation, index, reply.emotion), generation)
+                if index == 0:
+                    self._phase_timing(generation, 'portrait_first_ms', phase_started)
                 if not self._current(generation):
                     return
                 clip = await self._model(asyncio.to_thread(SentenceClip, pcm, rate, video,
@@ -272,19 +319,24 @@ class PhotoSession:
                     clip.close()
                     return
                 self.timeline.append(generation, clip)
+                if index == 0:
+                    self._phase_timing(generation, 'first_enqueue_ms', self._timing_started)
                 self._stats['sentences'] += 1
                 self.emit('status', text='正在播放')
             while self._current(generation) and self.timeline.busy:
                 await asyncio.sleep(.02)
             if self._current(generation):
+                self._finish_timing(generation, 'completed')
                 self._stats['turns'] += 1
                 self._stats['last_turn_seconds'] = clock.monotonic() - started
                 self.emit('turn_complete', generation=generation, seconds=self._stats['last_turn_seconds'])
                 self.emit('status', text='等待输入')
         except asyncio.CancelledError:
+            self._finish_timing(generation, 'interrupted')
             raise
         except Exception as exc:
             if self._current(generation):
+                self._finish_timing(generation, 'failed')
                 self._invalidate()
                 self.emit('error', text=str(exc))
         finally:

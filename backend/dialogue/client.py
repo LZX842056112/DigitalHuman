@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+import threading
 import httpx
 from backend.emotion import parse_reply
 
@@ -9,15 +10,18 @@ class Dialogue:
         self.root = root
         self.config = config
         self._recognizer = None
+        self._recognizer_lock = threading.Lock()
 
     def transcribe(self, audio):
         if self._recognizer is None:
-            from faster_whisper import WhisperModel
-            model = self.root / self.config.get("asr", {}).get("model", "models/asr/small")
-            if not (model / "model.bin").exists():
-                raise RuntimeError("语音识别模型尚未安装，请运行 setup.ps1")
-            self._recognizer = WhisperModel(str(model), device="cpu", compute_type="int8",
-                                            cpu_threads=4, local_files_only=True)
+            with self._recognizer_lock:
+                if self._recognizer is None:
+                    from faster_whisper import WhisperModel
+                    model = self.root / self.config.get("asr", {}).get("model", "models/asr/small")
+                    if not (model / "model.bin").exists():
+                        raise RuntimeError("语音识别模型尚未安装，请运行 setup.ps1")
+                    self._recognizer = WhisperModel(str(model), device="cpu", compute_type="int8",
+                                                    cpu_threads=4, local_files_only=True)
         segments, _ = self._recognizer.transcribe(audio, language="zh", vad_filter=True, beam_size=3)
         return "".join(segment.text for segment in segments).strip()
 

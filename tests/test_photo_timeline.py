@@ -135,3 +135,103 @@ def test_idle_cache_rejects_more_than_one_hundred_frames(tmp_path):
     path=movie(tmp_path/'too-long.mkv',frames=101)
     with pytest.raises(ValueError,match='待机.*100'):
         PhotoTimeline(np.zeros((16,16,3),np.uint8),idle_video=path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('decode_error',[False,True])
+async def test_slow_speech_decode_does_not_block_pcm_or_interrupt(tmp_path,decode_error):
+    import threading
+    from backend.transport.photo_timeline import PhotoTimeline, SentenceClip
+    timeline=PhotoTimeline(np.zeros((16,16,3),np.uint8))
+    path=movie(tmp_path/'speech.mkv')
+    clip=SentenceClip(np.ones(48000,np.float32)*.1,48000,path,delete=True)
+    timeline.append(timeline.begin_turn(),clip);timeline.read_audio(960)
+    entered=threading.Event();release=threading.Event();original=clip.video.at
+    def delayed(seconds):
+        entered.set()
+        assert release.wait(3),'decoder release timed out'
+        if decode_error:raise ValueError('decode failed')
+        return original(seconds)
+    clip.video.at=delayed
+    decoding=asyncio.create_task(asyncio.to_thread(timeline.video_frame))
+    watchdog=threading.Timer(.4,release.set)
+    try:
+        assert await asyncio.to_thread(entered.wait,2)
+        watchdog.start()
+        started=time.monotonic()
+        pcm,pts=timeline.read_audio(960)
+        timeline.interrupt()
+        assert time.monotonic()-started<.08,'speech decoder blocked PCM or interrupt'
+        assert pts==960 and pcm.mean()==pytest.approx(.1)
+        assert not clip.video.closed and path.exists()
+        release.set()
+        result=await asyncio.gather(decoding,return_exceptions=True)
+        if decode_error:assert isinstance(result[0],ValueError)
+        else:assert result[0][1]==960
+        assert clip.video.closed and not path.exists()
+        assert not timeline._readers and not timeline._retired
+    finally:
+        release.set();watchdog.cancel()
+        await asyncio.gather(decoding,return_exceptions=True)
+        timeline.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_defers_close_until_all_video_readers_finish(tmp_path):
+    import threading
+    from backend.transport.photo_timeline import PhotoTimeline, SentenceClip
+    timeline=PhotoTimeline(np.zeros((16,16,3),np.uint8))
+    clip=SentenceClip(np.ones(48000,np.float32),48000,movie(tmp_path/'shared.mkv'),delete=True)
+    timeline.append(timeline.begin_turn(),clip);timeline.read_audio(960)
+    entered=threading.Event();release=threading.Event();original=clip.video.at
+    def delayed(seconds):
+        entered.set();assert release.wait(3)
+        assert not clip.video.closed
+        return original(seconds)
+    clip.video.at=delayed
+    readers=[asyncio.create_task(asyncio.to_thread(timeline.video_frame)) for _ in range(2)]
+    try:
+        assert await asyncio.to_thread(entered.wait,2)
+        async def both_pinned():
+            while timeline._readers.get(clip)!=2:await asyncio.sleep(.001)
+        await asyncio.wait_for(both_pinned(),2)
+        timeline.interrupt()
+        assert not clip.video.closed
+        release.set();await asyncio.gather(*readers)
+        assert clip.video.closed and not clip.video.path.exists()
+        assert not timeline._readers and not timeline._retired
+    finally:
+        release.set();await asyncio.gather(*readers,return_exceptions=True);timeline.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action',['advance','close'])
+async def test_clip_transition_or_close_keeps_active_reader_and_original_pcm_snapshot(tmp_path,action):
+    import threading
+    from backend.transport.photo_timeline import PhotoTimeline,SentenceClip
+    timeline=PhotoTimeline(np.zeros((16,16,3),np.uint8))
+    clip=SentenceClip(np.ones(960,np.float32),48000,movie(tmp_path/'short.mkv'),delete=True)
+    timeline.append(timeline.begin_turn(),clip);timeline.read_audio(960)
+    entered,release=threading.Event(),threading.Event()
+    original_at,original_close=clip.video.at,clip.close
+    closes=[]
+    def delayed(seconds):
+        entered.set();assert release.wait(3)
+        assert not clip.video.closed
+        return original_at(seconds)
+    def close():
+        closes.append(True);original_close()
+    clip.video.at=delayed;clip.close=close
+    decoding=asyncio.create_task(asyncio.to_thread(timeline.video_frame))
+    try:
+        assert await asyncio.to_thread(entered.wait,2)
+        if action=='advance':timeline.read_audio(960)
+        else:timeline.close()
+        assert not closes and clip.video.path.exists()
+        release.set()
+        image,pts=await asyncio.wait_for(decoding,1)
+        assert image.shape==(16,16,3) and pts==960
+        assert len(closes)==1 and not clip.video.path.exists()
+        assert not timeline._readers and not timeline._retired
+    finally:
+        release.set();await asyncio.gather(decoding,return_exceptions=True);timeline.close()
