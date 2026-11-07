@@ -1,106 +1,209 @@
-# 照片对话数字人
+# 本机照片数字人
 
-用一张照片进行中文对话。人物可显示口型、眨眼、表情和轻微头部动作。照片的服装、背景和比例会保留。视频只提供参考声音。
+给一张照片、一段带人声的视频，就能在浏览器里和它实时对话：用克隆出来的声音回答，口型、表情和头部动作跟着声音走，画面保持照片的原比例。所有模型都在本机推理（声音与画面用显卡，对话模型用 CPU），素材和对话不出网。
 
-所有推理在本机运行。安装时需要联网。默认使用 Silent 电源方案。
+这个仓库不是调用云端数字人 API 的壳，而是一条从**素材准备 → 声音克隆 → 动作扩散 → 画面合成 → WebRTC 播放**完整跑通的本地流水线。它关心的是"第一句多久能出声"，而不是"一次能生成多少分钟视频"。
 
-## 启动
+## 能力一览
 
-在项目目录打开 PowerShell，运行：
+| 能力 | 现状 | 说明 |
+|---|---|---|
+| 照片驱动 | 支持 | Ditto 系模型，1024 长边，保留原图比例 |
+| 声音克隆 | 支持 | CosyVoice 3 zero-shot，6 秒参考音频，四种语气 |
+| 情感表达 | 支持 | `neutral / happy / sad / angry`，同时作用于语音与表情 |
+| 对话 | 支持 | 本机 Qwen2.5-3B（GGUF/CPU），JSON 结构化输出 |
+| 语音输入 | 支持 | 浏览器录音 + faster-whisper（CPU/int8） |
+| 实时传输 | 支持 | WebRTC（VP8 + Opus），25 fps，音画同源时钟 |
+| 逐句流式 | 可选 | `runtime.photo_streaming`，默认关闭 |
+| 多人并发 | 不支持 | 单进程单会话，同一时间一个人物 |
+
+## 它是怎么跑起来的
+
+四个进程都在 WSL2 的 `DigitalHuman` 发行版里，Windows 侧只有启动脚本和浏览器。
+
+```
+浏览器
+  │  HTTP :7860  +  WebRTC
+  ▼
+studio :7860   backend.api.app
+  ├─ NDJSON ─► voice :9880      CosyVoice 3  ─┐
+  ├─ NDJSON ─► portrait :9881   Ditto        ─┴─► 同一块 NVIDIA GPU
+  └─ SSE ────► dialogue :8081   Qwen2.5-3B   ───► CPU（llama.cpp）
+```
+
+- **studio** 只做编排：人物资料、任务、会话、WebRTC 协商、前端托管，自己不加载大模型。
+- **voice / portrait** 是两个独立 worker，各自持有模型，通过 NDJSON 流式返回分块。
+- **dialogue** 是 llama.cpp 的 `llama-server`，用 CPU 跑 3B 量化模型，`-ngl 0`。
+- 显存由 `backend/gpu.py` 的租约协调：准备人物时独占，对话时按会话共享，余量不足自动退化为串行。
+
+## 环境要求
+
+- Windows 10/11，开启 WSL2 与虚拟化；安装脚本会导入一个 Ubuntu 22.04 发行版（约 2 GB 下载）。
+- NVIDIA 显卡与可用驱动（PyTorch 2.3.0 + CUDA 12.1）。
+- 项目盘至少 10 GiB 空闲（模型与缓存放在项目内）；WSL 系统盘另需容纳两套 Python 环境与 llama.cpp（`/opt/digitalhuman`）。
+- 运行期不需要联网：`HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1`，模型哈希在安装时校验。
+
+## 安装与启动
+
+在项目根目录用 PowerShell：
 
 ```powershell
-.\scripts\start.ps1
+.\setup.ps1                  # 建 WSL 环境、装依赖、下模型、编译 llama.cpp、构建前端
+.\setup.ps1 -EnvironmentOnly # 只装环境，不下权重
+.\setup.ps1 -SkipModels      # 环境 + 源码，不下权重
+.\start.ps1                  # 启动四个服务，模型在后台预热
+.\start.ps1 -StudioOnly      # 只启动 7860（调试前端时用）
+.\stop.ps1                   # 停止本项目启动的进程
+.\doctor.ps1                 # 只读自检：环境、模型哈希、端口、前端构建戳
 ```
 
-打开 http://localhost:7860。选择人物，然后点击“准备人物”。试听参考录音，点击“确认声音并继续准备”。准备完成后，启动对话。可输入文字，也可按住麦克风按钮说话。原生音频播放器位于画面下方。若浏览器阻止自动播放，点击播放器的播放键。点击“打断”可停止当前回答。
+安装完成后打开 <http://127.0.0.1:7860>。
 
-若准备时服务退出，重启会将中断任务标为失败。再次点击“准备人物”可重试，并复用有效缓存。
-
-停止服务：
+`start.ps1` 会给子进程注入 `DIGITALHUMAN_WARMUP=1`，voice 与 portrait 启动后立刻加载权重再退回 CPU，所以第一次回答不用再等冷启动（本机实测预热约 65 s / 30 s，分别对应声音与画面）。想等预热完成再测延迟，用：
 
 ```powershell
-.\scripts\stop.ps1
+.\scripts\restart-and-warm.ps1   # 停 → 起 → 等健康 → 等预热 → 重建失败人物 → 打印 ready_avatars
 ```
 
-首次安装，或补齐依赖：
+## 第一次使用
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-.\scripts\doctor.ps1
+1. **导入人物**：左侧填名称，上传一张清晰单人照片（jpg/png）和一段带人声的视频（mp4/mov/mkv/webm，至少 6 秒清晰语音，音轨不超过 10 分钟）。视频只取音轨，不用画面。
+2. **准备人物**：点"准备人物"。任务依次做：抽取参考声音 → 提取照片特征并生成 4 秒待机画面 → 停下等确认。
+3. **确认声音**：试听参考音频（脚本自动挑一段 6 秒、噪声低、不爆音的片段）。确认后才允许合成，避免未经试听就用了别人的声音。
+4. **开始对话**：点"开始对话"，浏览器建立 WebRTC；第一次要先点一次"开启声音"（浏览器自动播放策略要求用户手势）。
+5. 输入文字，或按住麦克风说话。回答生成过程中文字会逐句出现，声音与画面同步播放。
+
+人物状态机：`imported → preparing → voice_pending → ready`，任一步失败进入 `failed`，重新点"准备人物"即可（已完成的照片缓存会复用）。
+
+## 配置
+
+全部在 `configs/app.yaml`，改完重启对应服务生效（渲染提速的三个开关例外，见下）。
+
+| 键 | 默认 | 作用 |
+|---|---|---|
+| `host` / `port` | `127.0.0.1` / `7860` | studio 监听地址 |
+| `portrait.base_url` | `http://127.0.0.1:9881` | 画面 worker |
+| `dialogue.base_url` | `http://127.0.0.1:8081/v1` | OpenAI 兼容对话接口 |
+| `dialogue.model` | `qwen2.5-3b-instruct` | 与 llama-server 的 `--alias` 一致 |
+| `dialogue.max_tokens` | `128` | 回答上限（配合"最多两句"的提示词） |
+| `dialogue.context_turns` | `6` | 带多少轮历史 |
+| `voice.base_url` | `http://127.0.0.1:9880` | 声音 worker |
+| `asr.model` | `models/asr/small` | faster-whisper 模型目录 |
+| `asr.device` / `asr.compute_type` | `cpu` / `int8` | 识别放在 CPU，避开显存 |
+| `runtime.photo_streaming` | `false` | 音画流式总开关 |
+| `runtime.dialogue_streaming` | `true` | 回答按 SSE 流式返回并逐句切分 |
+| `runtime.portrait_sampling_steps` | `12` | 动作扩散步数（模型原生 50） |
+| `runtime.portrait_frame_batch` | `4` | 离线渲染的批大小，显存不足自动退回逐帧 |
+| `runtime.portrait_frame_stride` | `2` | 每 N 帧只算一张再重复写出，25 fps 不变 |
+| `runtime.first_clause_chars` | `14` | 首段在逗号处提前切出的字数上限，`0` 关闭 |
+| `runtime.idle_timeout_seconds` | `900` | 会话空闲回收 |
+| `runtime.disk_reserve_gib` | `10` | 流式生成要求保留的磁盘空间 |
+
+想完全回到原始画质：`portrait_sampling_steps: 50`、`portrait_frame_batch: 1`、`portrait_frame_stride: 1`。这三个值由渲染端每次重读配置文件，改完下一句即生效，不必重启。流式开关只在会话开始时读取，必须重启 studio。
+
+## 目录结构
+
+```
+backend/
+  api/app.py              studio：人物、任务、会话、WebRTC 协商、静态前端
+  dialogue/client.py      对话模型客户端（SSE + 增量 JSON 提取）与语音识别
+  voice/                  CosyVoice 引擎、HTTP 服务、客户端
+  portrait/               Ditto 引擎、分块流、照片缓存、HTTP 服务、客户端
+  transport/
+    photo_session.py      一轮对话的编排：切句、派发、打断、计时
+    photo_timeline.py     以 PCM 为主时钟的句级播放时间线
+    photo_webrtc.py       WebRTC 音视频轨道与麦克风采集
+    video_quality.py      固定码率与参数的本地 VP8 编码器
+  gpu.py                  跨进程 GPU 租约、显存准入、取消标记
+  stream_jobs.py          临时目录、音频 spool、NDJSON 事件校验
+  stream_worker.py        同步原生生成器的后台线程与断连保护
+  stream_audio.py         连续重采样与整句响度归一
+  photo_profiles.py       人物资料、素材校验、资产哈希
+  storage.py              原子 JSON、哈希、人物目录
+frontend/src/             React 19 + Vite 前端（photo-main.tsx 是主界面）
+scripts/                  安装、启动、自检、验收、基准、预热脚本
+tests/                    250 个测试函数（约 310 项用例）
+configs/                  app.yaml、模型清单与两套 Python 依赖
+docs/                     PRD、代码设计、技术讲解
+data/                     人物资料与运行产物（不入库）
 ```
 
-`-EnvironmentOnly` 只安装环境和源码。`-SkipModels` 使用已有权重。首次启用 WSL 可能需要管理员权限和重启。安装失败后可重跑。模型下载支持续传，并检查大小与 SHA。源码写入使用临时文件。已有源码修改不会被覆盖。
+## 接口
 
-环境为 WSL2 Ubuntu 22.04、Python 3.10、Torch 2.3.0+cu121。照片和声音各使用一个环境。已在 RTX 3070 Ti Laptop 8 GiB 上运行真实模型。首次安装约需下载 9.6 GiB 权重；还需为环境、缓存及输出留出空间。脚本保留至少 10 GiB 可用空间。首次加载较慢。每句话先生成声音和完整画面，再开始播放。
+studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 
-## 素材
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health`、`/system`、`/avatars`、`/avatars/{id}` | 健康、自检、人物列表与详情 |
+| POST | `/avatars/import` | multipart：`name`、`photo`、`voice_video` |
+| PUT | `/avatars/{id}/photo`、`/voice-video` | 替换素材（会清空对应校验） |
+| PUT | `/avatars/{id}/voice` | `{"confirmed": true}`，确认参考声音 |
+| DELETE | `/avatars/{id}` | 删除人物（只删项目内副本） |
+| POST | `/avatars/{id}/build` | 开始准备，返回 `job_id` |
+| GET | `/jobs/{id}` | 任务进度：`stage` / `progress` / `status` |
+| POST | `/sessions` | 新建会话，返回宽高与 25 fps |
+| POST | `/sessions/{id}/offer` | WebRTC SDP 交换 |
+| DELETE | `/sessions/{id}` | 关闭会话并回收 |
+| GET | `/sessions/{id}/metrics` | 帧数、丢帧、队列、分块缓冲、最近一轮计时 |
 
-在界面导入一张 PNG/JPG 照片和一个带声音的视频。使用清晰、无遮挡、只有一张主要人脸的照片。视频需有至少六秒清晰原声，参考音轨最长十分钟。准备时按实际解码采样检查上限，超限会提示更换较短视频，不会静默裁剪。已有且校验有效的参考录音会继续复用。视频处理只解码音轨，不抽帧。
+内部 worker（只监听回环，不对外）：
 
-照片与声音视频可分别替换。更换照片只使外观缓存失效。更换视频只使声音参考失效。重启后可重新加载缓存。删除人物会删除项目中的人物副本，不会删除外部原文件或共享模型。
+| 服务 | 接口 |
+|---|---|
+| voice 9880 | `GET /health`、`POST /tts`（WAV）、`POST /tts/stream`（NDJSON） |
+| portrait 9881 | `GET /health`、`POST /prepare`、`POST /render`、`POST /render/stream`（NDJSON） |
 
-已有三维人物在第一次准备时转换为照片人物，默认使用其第一张身体照片。旧人物 JSON 会保存为 `avatar.legacy.json`。旧素材、输出和模型权重仍保留在磁盘上。
+浏览器与 studio 之间的控制通道是 WebRTC DataChannel：
 
-也可通过脚本导入：
+- 上行：`chat_text`、`start_recording`、`stop_recording`、`interrupt`
+- 下行：`transcript`、`reply_partial`、`status`、`error`、`turn_complete`
 
-```powershell
-.\scripts\build_avatar.ps1 -Photo 'C:\path\photo.png' -VoiceVideo 'C:\path\voice.mp4' -Name '人物名称'
+## 工具脚本
+
+| 脚本 | 用途 |
+|---|---|
+| `scripts/acceptance.py` | 真实 WebRTC 连续运行验收，记录帧率、断流、队列与显存峰值 |
+| `scripts/benchmark_latency.py` | 测首帧/首声延迟，不代替浏览器可听性验收 |
+| `scripts/profile_streaming.py` | 双模型同卡显存探测，产出 `.runtime/stream-admission.json` 供准入使用 |
+| `scripts/render-bench.py` | 画面 A/B：改 `steps,batch,stride` 跑固定音频，比较各阶段耗时 |
+| `scripts/restart-and-warm.ps1` | 重启并等到预热完成，适合测冷/热启动 |
+| `scripts/check_frontend.py` | 校验 `frontend/dist` 与源码摘要一致（`doctor` 也会查） |
+
+## 测试
+
+```bash
+# 在 WSL 里，用项目的 portrait 环境
+/opt/digitalhuman/portrait/bin/python -m pytest tests -q
 ```
 
-准备已有的人物：` .\scripts\build_avatar.ps1 -AvatarId '人物编号' `。脚本遇到声音确认步骤时返回。请在界面完成确认。
+覆盖素材校验、人物准备、句级时间线、流式分块、GPU 租约、WebRTC 轨道、对话流解析等。以下用例在纯 Windows 上无法收集或运行，需要 WSL 的 `/proc`、`fcntl` 共享锁或 `aiortc` 音视频栈：`test_photo_webrtc`、`test_video_quality`、`test_frame_rate_measurement`、`test_acceptance_guards`，以及 `test_stream_gpu` 中依赖进程签名的部分。
 
-## 代码结构
+## 数据、隐私与清理
 
-```text
-backend/api/             人物、素材、任务和会话接口
-backend/photo_profiles.py 素材身份、旧资料转换和资产校验
-backend/media.py         仅音轨解析与参考录音
-backend/dialogue/        Qwen 中文回答和 faster-whisper 识别
-backend/voice/           CosyVoice 3 情感克隆声音
-backend/portrait/        Ditto 照片处理、动画和外观缓存
-backend/transport/       句子队列、共同播放时间轴和 WebRTC
-frontend/src/            React 界面及原生音频播放器
-configs/                 参数、依赖版本和模型哈希清单
-scripts/                 安装、下载、检查、准备和服务管理
-models/ third_party/     本地权重和固定版本源码
- data/avatars/           人物素材、照片缓存和参考声音
- data/sessions/          当前回答的临时 WAV/MKV
-outputs/                 试听、视频和验收证据
-.runtime/                WSL、日志、安装锁定依赖和缓存
-```
+- `data/avatars/<id>/`：原始素材副本、`avatar.json`、参考音频、照片特征缓存、待机视频。
+- `data/sessions/<id>/`：每轮的 WAV/MKV 与 `generation.json`（打断标记）。
+- `.runtime/`：日志、GPU 锁、服务登记、模型下载缓存。
+- 流式临时文件写系统临时目录（`/tmp/digitalhuman-photo/<项目哈希>/...`），句末或打断后删除。
+- 删除人物只删项目内副本，原始文件不动；`outputs/` 与 `data/` 都不入库。
 
-对话流程为：文字或语音识别 → Qwen 回答和情感 → CosyVoice 声音 → Ditto 画面 → 同步播放。情感类型为自然、开心、难过和生气。声音与画面使用同一类型。两个模型串行使用显卡，空闲模型移回内存。待播队列最多两句。播放以已消耗的 PCM 采样位置选择画面。打断会清空队列，并使旧模型结果失效。
+## 常见问题
 
-主要接口为 `/api/avatars/import`、`/api/avatars/{id}/photo`、`/voice-video`、`/voice`、`/build`、`/api/jobs/{id}` 和 `/api/sessions`。三维头像候选、相机和动作接口已删除。
+**提示"请先停止准备任务或交互会话"**：同一时间只允许一个会话或一次准备。先断开连接/等任务结束。
 
-## 验证
+**"照片服务：Internal Server Error"**：portrait worker 崩了。看 `.runtime/logs/` 下对应日志；`doctor.ps1` 会指出是模型哈希、环境还是端口问题。
 
-```powershell
-wsl -d DigitalHuman -- bash /mnt/d/Projects/3d/DigitalHuman/scripts/run_python.sh /mnt/d/Projects/3d/DigitalHuman -m pytest -q
-cd frontend
-npm.cmd run build
-node --experimental-strip-types --test tests/native-audio-output.test.ts
-```
+**首句很慢**：确认启动时带了预热（`restart-and-warm.ps1`），并检查 `GET /api/sessions/{id}/metrics` 里的 `last_turn_timing`：`llm_ms` 高是对话模型慢，`tts_first_ms` 高是声音冷启动或显存换入，`portrait_first_ms` 高是画面在等第一批动作。
 
-真实十轮对话和十分钟测试使用 `scripts.acceptance`。该命令会实际调用模型。最新结果见 [验收记录](docs/acceptance.md)。自动测试不能确认人物相似度、声音身份和主观情感效果。仍需实际试看和试听。
+**声音断续/画面停顿**：`metrics.stream_underruns` 与 `paired_buffer_seconds` 能看出是配音不足还是画面不足；流式模式可先退回 `photo_streaming: false` 确认基线。
 
-首声延迟可用 `scripts.benchmark_latency --avatar-id 人物编号` 测量。该命令会重启本项目管理的服务，分别采集文字和预录语音输入的三次冷启动与二十次预热请求；不结束其他程序。结果保存在 `outputs/latency/`，记录首个非静音音频帧的接收耗时、整轮耗时及后台阶段计时。这些数据不代表实体扬声器已经出声，也不替代持续帧率和浏览器音画同步验收。
+**浏览器没有声音**：点一次"开启声音"；`diagnostics=1` 页面能看到音画偏差与解码帧数。
 
-比较两版实现时，候选版增加 `--audio-fixtures 原采样目录/input-audio`，复用相同语音文件。工具会校验问题顺序、文件路径与 SHA-256；不要重新生成另一批输入来代替配对比较。
+**改了前端没生效**：`cd frontend && npm run build`，再跑 `python -m scripts.check_frontend`；studio 只托管 `frontend/dist`。
 
-流式链路由 `configs/app.yaml` 中的 `runtime.photo_streaming` 控制，目前默认关闭，等待真实效果、延迟和连续运行验收。启用后，声音使用原生流式合成，画面按封口的视频块与相同采样范围配对播放。新临时块存入WSL本地临时目录，原人物、模型和素材不迁移。逐项验收结论、未通过门禁和续跑方法见 [流式优化验收记录](docs/streaming-optimization-results-2026-11-05.md)；自动门禁判定见 `outputs/streaming-optimization/20261105-082835/gates.json`。
+**端口被占用**：`.\stop.ps1` 后重试；`doctor.ps1` 会列出被外部进程占用的端口。
 
-回答模型默认按 SSE 流式返回（`runtime.dialogue_streaming`，默认 `true`）：边生成边按句切分，首句一闭合就开始合成声音和画面，不必等整段回答。首句还会在 `runtime.first_clause_chars` 个字符内遇到逗号时先切一小段。这条链路与 `photo_streaming` 相互独立，关掉它即回到“整段生成完再合成”。
+## 文档
 
-同一会话的双模型并行需要与当前代码、模型和显卡匹配的实测显存准入记录；空间不足或没有记录时使用串行分块。两种方式都保留25 FPS、原比例和现有采样步数。首次播放前可因显存不足重试一次，已播放的内容不会自动重播。诊断页面 `http://localhost:7860/?diagnostics=1` 显示分块耗时、缓冲次数和运行方式。播放队列开始输出不等于实体扬声器已经出声。
-
-对话和构建结束后，可在WSL运行 `python -m scripts.profile_streaming --avatar 人物编号`。该工具用真实声音和画面模型测试四种情感，采集显存峰值。全部通过后才写入本机准入记录。它不修改人物的声音确认状态，也不代替效果、延迟和连续播放验收。
-
-流式计时使用以下定义。所有 `_ms` 字段的单位均为毫秒。
-
-- `asr_ms`、`llm_ms` 保留原含义。`tts_first_ms`、`portrait_first_ms` 仍计首句请求，直到对应流完整结束，包含等待与清理。
-- `tts_first_chunk_ms`、`portrait_first_chunk_ms` 从各自的首句请求开始，计到首个有效分块。两个阶段可以重叠，不能直接相加。
-- `first_pair_ready_ms` 从本轮输入开始，计到首批可配对音画。流式模式的 `first_enqueue_ms` 使用同一含义；整句模式仍计到首句完整入队。
-- `playback_start_ms` 从本轮输入开始，计到后台首次消耗配对PCM。它不代表浏览器或实体扬声器已经出声。`first_non_silent_receive_ms` 由验收接收端另行记录。
-- worker的 `timings` 分别记录加载、GPU等待与传输、特征、动作、画面、编码和卸载。`timing_spans` 是同一单调时钟上的秒值区间，用于验证并行阶段。
-- `stream_underruns` 包含句内欠载和句间等待，按回答代际计数。`delivery_mode` 区分整句、串行分块和并行分块。验收工具会在每轮结束时检查这些字段。
+- [产品需求文档](docs/PRD.md)：目标、用户场景、功能与非功能需求、验收标准。
+- [代码设计](docs/architecture.md)：进程与模块、数据模型、时序、时间线、流式链路、GPU 并发、错误处理。
+- [项目技术讲解](docs/technical-guide.md)：模型原理、延迟预算、音画同步、调参与排错，适合第一次接手的人按顺序读。
