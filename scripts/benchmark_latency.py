@@ -20,7 +20,7 @@ from aiortc import MediaStreamTrack,RTCConfiguration,RTCPeerConnection,RTCSessio
 from backend import clock
 from backend.media import read_audio,write_wav
 from backend.storage import atomic_json
-from scripts.acceptance import QUESTIONS
+from scripts.acceptance import QUESTIONS,check_stream_continuity
 from scripts import services
 
 
@@ -180,6 +180,7 @@ async def measure(root,avatar_id,cases,folder):
             for index,case in enumerate(cases):
                 row={**case,'status':'running','first_non_silent_receive_ms':None}
                 report['samples'].append(row)
+                reply=None;sent=None;meter.arm(None)
                 try:
                     await wait_for_quiet(meter)
                     if errors:raise RuntimeError(errors[-1])
@@ -210,15 +211,26 @@ async def measure(root,avatar_id,cases,folder):
                             row['generation']=event['generation'];break
                     if reply is None or meter.first_ms is None:raise RuntimeError('Answer or received speech missing')
                     response=await client.get(f'/api/sessions/{sid}/metrics');response.raise_for_status()
-                    timing=response.json()['last_turn_timing']
+                    metrics=response.json()
+                    row.update(server_metrics=metrics,answer=reply)
+                    check_stream_continuity(metrics)
+                    timing=metrics['last_turn_timing']
                     if timing['generation']!=row['generation'] or timing['status']!='completed':
                         raise RuntimeError('Server timing belongs to another or unfinished turn')
                     row.update(status='completed',first_non_silent_receive_ms=meter.first_ms,
                         total_ms=(clock.monotonic()-sent)*1000,server_timing=timing,
+                        delivery_mode=metrics.get('delivery_mode','buffered'),
+                        stream_underruns=metrics.get('stream_underruns',0),
                         answer=reply,answer_chars=len(reply),
                         first_sentence_chars=len(re.split(r'[。！？!?\n]',reply)[0]))
                     print(f"{case['input_kind']} {case['phase']} {index+1}/{len(cases)}: first={meter.first_ms/1000:.3f}s",flush=True)
                 except BaseException as error:
+                    if reply is not None:row['answer']=reply
+                    if sent is not None and 'server_metrics' not in row:
+                        try:
+                            response=await client.get(f'/api/sessions/{sid}/metrics',timeout=5)
+                            response.raise_for_status();row['server_metrics']=response.json()
+                        except Exception as fetch_error:row['metrics_error']=str(fetch_error)
                     row.update(status='failed',error=f'{type(error).__name__}: {error}',first_non_silent_receive_ms=meter.first_ms)
                     raise
                 finally:

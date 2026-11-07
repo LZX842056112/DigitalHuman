@@ -87,3 +87,20 @@ node --experimental-strip-types --test tests/native-audio-output.test.ts
 首声延迟可用 `scripts.benchmark_latency --avatar-id 人物编号` 测量。该命令会重启本项目管理的服务，分别采集文字和预录语音输入的三次冷启动与二十次预热请求；不结束其他程序。结果保存在 `outputs/latency/`，记录首个非静音音频帧的接收耗时、整轮耗时及后台阶段计时。这些数据不代表实体扬声器已经出声，也不替代持续帧率和浏览器音画同步验收。
 
 比较两版实现时，候选版增加 `--audio-fixtures 原采样目录/input-audio`，复用相同语音文件。工具会校验问题顺序、文件路径与 SHA-256；不要重新生成另一批输入来代替配对比较。
+
+流式链路由 `configs/app.yaml` 中的 `runtime.photo_streaming` 控制，目前默认关闭，等待真实效果、延迟和连续运行验收。启用后，声音使用原生流式合成，画面按封口的视频块与相同采样范围配对播放。新临时块存入WSL本地临时目录，原人物、模型和素材不迁移。逐项验收结论、未通过门禁和续跑方法见 [流式优化验收记录](docs/streaming-optimization-results-2026-11-05.md)；自动门禁判定见 `outputs/streaming-optimization/20261105-082835/gates.json`。
+
+回答模型默认按 SSE 流式返回（`runtime.dialogue_streaming`，默认 `true`）：边生成边按句切分，首句一闭合就开始合成声音和画面，不必等整段回答。首句还会在 `runtime.first_clause_chars` 个字符内遇到逗号时先切一小段。这条链路与 `photo_streaming` 相互独立，关掉它即回到“整段生成完再合成”。
+
+同一会话的双模型并行需要与当前代码、模型和显卡匹配的实测显存准入记录；空间不足或没有记录时使用串行分块。两种方式都保留25 FPS、原比例和现有采样步数。首次播放前可因显存不足重试一次，已播放的内容不会自动重播。诊断页面 `http://localhost:7860/?diagnostics=1` 显示分块耗时、缓冲次数和运行方式。播放队列开始输出不等于实体扬声器已经出声。
+
+对话和构建结束后，可在WSL运行 `python -m scripts.profile_streaming --avatar 人物编号`。该工具用真实声音和画面模型测试四种情感，采集显存峰值。全部通过后才写入本机准入记录。它不修改人物的声音确认状态，也不代替效果、延迟和连续播放验收。
+
+流式计时使用以下定义。所有 `_ms` 字段的单位均为毫秒。
+
+- `asr_ms`、`llm_ms` 保留原含义。`tts_first_ms`、`portrait_first_ms` 仍计首句请求，直到对应流完整结束，包含等待与清理。
+- `tts_first_chunk_ms`、`portrait_first_chunk_ms` 从各自的首句请求开始，计到首个有效分块。两个阶段可以重叠，不能直接相加。
+- `first_pair_ready_ms` 从本轮输入开始，计到首批可配对音画。流式模式的 `first_enqueue_ms` 使用同一含义；整句模式仍计到首句完整入队。
+- `playback_start_ms` 从本轮输入开始，计到后台首次消耗配对PCM。它不代表浏览器或实体扬声器已经出声。`first_non_silent_receive_ms` 由验收接收端另行记录。
+- worker的 `timings` 分别记录加载、GPU等待与传输、特征、动作、画面、编码和卸载。`timing_spans` 是同一单调时钟上的秒值区间，用于验证并行阶段。
+- `stream_underruns` 包含句内欠载和句间等待，按回答代际计数。`delivery_mode` 区分整句、串行分块和并行分块。验收工具会在每轮结束时检查这些字段。

@@ -6,11 +6,13 @@ import './photo-style.css';
 
 type Avatar={id:string;name:string;status:string;photo:string;voice_video:string;voice:{confirmed:boolean;reference?:string};validation:{photo:boolean;voice:boolean};portrait?:{folder:string;width:number;height:number;fps:number};last_job_id?:string};
 type Job={id:string;status:string;stage:string;progress:number;error?:string;message?:string};
-type Message={role:string;text:string};
+type Message={role:string;text:string;partial?:boolean};
 type RtcProbe={state:string;samples?:number;maxAbsOffsetMs?:number;p95AbsOffsetMs?:number;video?:{framesDecoded?:number;framesDropped?:number;framesPerSecond?:number}};
-type TurnTiming={generation:number;input_kind:'text'|'audio';status:string;asr_ms:number|null;llm_ms:number|null;tts_first_ms:number|null;portrait_first_ms:number|null;first_enqueue_ms:number|null;total_ms:number|null};
+type TurnTiming={generation:number;input_kind:'text'|'audio';status:string;asr_ms:number|null;llm_ms:number|null;tts_first_ms:number|null;portrait_first_ms:number|null;first_enqueue_ms:number|null;total_ms:number|null;tts_first_chunk_ms?:number|null;portrait_first_chunk_ms?:number|null;first_pair_ready_ms?:number|null;playback_start_ms?:number|null;stream_retries?:number;llm_first_ms?:number|null;llm_first_sentence_ms?:number|null};
+type RuntimeProbe={delivery_mode?:string;stream_underruns?:number;paired_buffer_seconds?:number;stream_fallback_reason?:string|null};
 const milliseconds=(value:number|null|undefined)=>typeof value==='number'?value.toFixed(1)+' 毫秒':'未测量';
 const timingStatusName:Record<string,string>={running:'正在处理',completed:'已完成',interrupted:'已打断',failed:'未完成'};
+const deliveryName:Record<string,string>={buffered:'整句准备',streaming_serial:'串行分块',streaming_parallel:'并行分块'};
 const activeJob=(job:Job|null)=>!!job&&['queued','running'].includes(job.status);
 const statusName:Record<string,string>={imported:'素材已导入',preparing:'正在准备',voice_pending:'请试听参考声音',ready:'可以开始对话',failed:'准备未完成'};
 const stageName:Record<string,string>={queued:'等待处理',import:'导入素材',audio:'提取参考声音',photo:'准备人物画面',voice:'检查克隆声音',complete:'准备完成',source_integrity:'检查素材',media:'读取照片和声音',reference_confirmation:'请试听参考声音',voice_reference:'准备参考声音',portrait:'准备人物画面',voice_and_audio_expression:'检查声音和口型',ready:'准备完成',gpu_busy:'等待本机任务完成'};
@@ -24,6 +26,7 @@ export default function PhotoApp(){
  const [recording,setRecording]=useState(false),[micAllowed,setMicAllowed]=useState(false),[generating,setGenerating]=useState(false);
  const [volume,setVolume]=useState(1),[soundState,setSoundState]=useState<AudioOutputState>('off'),[soundError,setSoundError]=useState('');
  const [rtcProbe,setRtcProbe]=useState<RtcProbe|null>(null),[turnTiming,setTurnTiming]=useState<TurnTiming|null>(null);
+ const [runtimeProbe,setRuntimeProbe]=useState<RuntimeProbe|null>(null);
  const mounted=useRef(true),operation=useRef(false),sessionInFlight=useRef(false),isRecording=useRef(false),refreshVersion=useRef(0),jobVersion=useRef(0),sessionVersion=useRef(0);
  const peer=useRef<RTCPeerConnection|null>(null),channel=useRef<RTCDataChannel|null>(null),sid=useRef(''),local=useRef<MediaStream|null>(null);
  const audioOutput=useRef<RemoteAudioOutput|null>(null),remoteAudio=useRef<HTMLAudioElement>(null),referenceAudio=useRef<HTMLAudioElement>(null),video=useRef<HTMLVideoElement>(null),scroll=useRef<HTMLDivElement>(null);
@@ -42,6 +45,18 @@ export default function PhotoApp(){
   const timer=setInterval(()=>{try{const raw=video.current?.dataset.rtcSynchronization;if(raw)setRtcProbe(JSON.parse(raw))}catch{}},1000);
   return ()=>clearInterval(timer);
  },[diagnostics]);
+ useEffect(()=>{
+  if(!diagnostics||!connected||!sid.current)return;
+  const id=sid.current,version=sessionVersion.current;let stopped=false,pending=false;
+  async function sample(){
+   if(pending)return;pending=true;
+   try{const result=await api('/sessions/'+encodeURIComponent(id)+'/metrics');
+    if(!stopped&&sessionVersion.current===version&&sid.current===id){setTurnTiming(result.last_turn_timing||null);setRuntimeProbe(result)}
+   }catch{}finally{pending=false}
+  }
+  void sample();const timer=setInterval(()=>void sample(),1000);
+  return ()=>{stopped=true;clearInterval(timer)};
+ },[diagnostics,connected]);
  async function refresh(preferred?:string){
   const version=++refreshVersion.current;const items:Avatar[]=await api('/avatars');
   if(!mounted.current||version!==refreshVersion.current)return;
@@ -123,7 +138,7 @@ export default function PhotoApp(){
  async function connect(){
   if(operation.current||sessionInFlight.current||locked||!current||current.status!=='ready'||sid.current)return;
   sessionInFlight.current=true;referenceAudio.current?.pause();
-   const version=++sessionVersion.current;setConnecting(true);setError('');setStatus('正在连接');setMessages([]);setTurnTiming(null);setRtcProbe(null);void enableSound();
+   const version=++sessionVersion.current;setConnecting(true);setError('');setStatus('正在连接');setMessages([]);setTurnTiming(null);setRtcProbe(null);setRuntimeProbe(null);void enableSound();
   const valid=()=>mounted.current&&version===sessionVersion.current;
   try{
    const created=await api('/sessions',{method:'POST',...json({avatar_id:current.id})});
@@ -146,7 +161,17 @@ export default function PhotoApp(){
     if(!valid())return;
     try{
      const data=JSON.parse(event.data);
-     if(data.type==='transcript'&&typeof data.text==='string')setMessages(previous=>[...previous.slice(-79),{role:data.role==='user'?'user':'assistant',text:data.text}]);
+     if(data.type==='reply_partial'&&typeof data.text==='string')setMessages(previous=>{
+      const last=previous[previous.length-1];
+      const entry={role:'assistant',text:data.text,partial:true};
+      return last?.role==='assistant'&&last.partial?[...previous.slice(0,-1),entry]:[...previous.slice(-79),entry];
+     });
+     if(data.type==='transcript'&&typeof data.text==='string')setMessages(previous=>{
+      const last=previous[previous.length-1];
+      const entry={role:data.role==='user'?'user':'assistant',text:data.text};
+      if(last?.role==='assistant'&&last.partial)return [...previous.slice(0,-1),entry];
+      return [...previous.slice(-79),entry];
+     });
      if(data.type==='status'&&typeof data.text==='string')setStatus(data.text);
      if(data.type==='error'){setError(data.text||'对话未完成。请重试。');setGenerating(false)}
      if(data.type==='turn_complete'){setGenerating(false);setStatus('回答完成')}
@@ -194,13 +219,18 @@ export default function PhotoApp(){
    <aside className="photo-panel photo-conversation"><h2>与数字人对话</h2><p className="photo-hint">输入文字，或按住麦克风按钮说话。</p><div className="photo-messages" ref={scroll}>{messages.length?messages.map((message,index)=><div key={index} className={'photo-message '+message.role}><small>{message.role==='user'?'你':'数字人'}</small><p>{message.text}</p></div>):<div className="photo-chat-empty"><Volume2 size={30}/><p>从一句问候开始。</p></div>}</div><p className="photo-status" role="status">{generating&&<Loader2 size={13} className="photo-spin"/>}{status}</p><form className="photo-chat-form" onSubmit={chat}><textarea aria-label="对话文字" placeholder="输入你想说的话…" value={text} maxLength={500} disabled={!connected||recording} onChange={event=>setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();chat(event)}}}/><button aria-label="发送文字" type="submit" disabled={!connected||generating||recording||!text.trim()}><Send size={17}/></button></form><div className="photo-talk"><button disabled={!connected||!micAllowed} className={recording?'photo-recording':''} onPointerDown={event=>{if(event.button!==0)return;event.currentTarget.setPointerCapture(event.pointerId);startRecording()}} onPointerUp={stopRecording} onPointerCancel={stopRecording} onLostPointerCapture={stopRecording} onKeyDown={event=>{if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();startRecording()}}} onKeyUp={event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();stopRecording()}}} onBlur={stopRecording}><Mic size={15}/>{recording?'松开结束':'按住说话'}</button><button disabled={!connected} onClick={interrupt}><Square size={13}/>打断</button></div>{connected&&!micAllowed&&<p className="photo-hint">麦克风未授权。可以继续输入文字。</p>}</aside>
   </div>
   {diagnostics&&connected&&<section className="photo-panel" aria-label="运行诊断"><h2>运行诊断</h2>
+   <p>生成方式：{deliveryName[runtimeProbe?.delivery_mode||'']||'未测量'}；缓冲停顿：{runtimeProbe?.stream_underruns??'未测量'} 次；待播音画：{runtimeProbe?.paired_buffer_seconds?.toFixed(2)??'未测量'} 秒</p>
+   {runtimeProbe?.stream_fallback_reason&&<p>{runtimeProbe.stream_fallback_reason}</p>}
    {rtcProbe?.state==='measured'&&!!rtcProbe.samples?<>
     <p>同步采样：{rtcProbe.samples} 次；最大音画差：{milliseconds(rtcProbe.maxAbsOffsetMs)}；P95：{milliseconds(rtcProbe.p95AbsOffsetMs)}</p>
     <p>解码帧：{rtcProbe.video?.framesDecoded??'未测量'}；接收端丢帧：{rtcProbe.video?.framesDropped??'未测量'}；瞬时帧率：{rtcProbe.video?.framesPerSecond??'未测量'} FPS</p>
    </>:<p>音画同步：未测量。请保持原生音频正在播放，并使用支持播放时间统计的浏览器。</p>}
    {turnTiming&&<><h3>最近一轮 · {turnTiming.generation} · {timingStatusName[turnTiming.status]||'状态未知'}</h3>
     <p>识别：{turnTiming.input_kind==='text'?'不适用':milliseconds(turnTiming.asr_ms)}；回答生成：{milliseconds(turnTiming.llm_ms)}；首句声音：{milliseconds(turnTiming.tts_first_ms)}；首句画面：{milliseconds(turnTiming.portrait_first_ms)}</p>
-    <p>首句就绪：{milliseconds(turnTiming.first_enqueue_ms)}；整轮：{milliseconds(turnTiming.total_ms)}</p></>}
+    <p>回答首字：{milliseconds(turnTiming.llm_first_ms)}；首句文字：{milliseconds(turnTiming.llm_first_sentence_ms)}</p>
+    <p>首段就绪：{milliseconds(turnTiming.first_enqueue_ms)}；整轮：{milliseconds(turnTiming.total_ms)}</p>
+    {runtimeProbe?.delivery_mode?.startsWith('streaming')&&<><p>首个声音块：{milliseconds(turnTiming.tts_first_chunk_ms)}；首个画面块：{milliseconds(turnTiming.portrait_first_chunk_ms)}</p><p>首对音画：{milliseconds(turnTiming.first_pair_ready_ms)}；播放队列开始输出：{milliseconds(turnTiming.playback_start_ms)}；本轮重试：{turnTiming.stream_retries??0} 次</p></>}
+   </>}
    <p className="photo-hint">首句就绪表示已进入播放队列。瞬时帧率不替代连续运行验收。</p>
   </section>}
   <footer>素材和推理保留在本机。</footer>{error&&<div className="photo-error" role="alert"><span>{error}</span><button aria-label="关闭错误提示" onClick={()=>setError('')}><X size={16}/></button></div>}

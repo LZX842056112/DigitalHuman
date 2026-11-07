@@ -48,7 +48,7 @@ def test_idle_rebuild_overwrites_unverified_existing_video(tmp_path):
     target=tmp_path/'idle.mkv'
     target.write_bytes(b'broken previous render')
     calls=[]
-    def render(source,motions,path,options,cancelled,*,idle):
+    def render(source,motions,path,options,cancelled,*,idle,batch=1,stride=1):
         calls.append((len(motions),idle))
         path.write_bytes(b'rebuilt idle')
     engine._frames=render

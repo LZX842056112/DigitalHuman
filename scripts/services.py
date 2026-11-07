@@ -113,7 +113,7 @@ def start(root, studio_only=False):
          'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HOME':str(root/'.runtime/hf'),
          'TORCH_HOME':str(root/'.runtime/torch'),
          'TORCHDYNAMO_DISABLE':'0','TORCHINDUCTOR_CACHE_DIR':str(root/'.runtime/cache/inductor'),
-         'TOKENIZERS_PARALLELISM':'false','OMP_NUM_THREADS':'4'}
+         'TOKENIZERS_PARALLELISM':'false','OMP_NUM_THREADS':'4','DIGITALHUMAN_WARMUP':'1'}
     env['PATH']='/usr/lib/wsl/lib:'+env.get('PATH','')
     launched=[]
     try:

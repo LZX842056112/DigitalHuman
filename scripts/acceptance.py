@@ -24,6 +24,14 @@ def video_rate_target_met(average,duration,windows,target=15):
         window['fps']*window['seconds']+1+1e-8>=target*window['seconds'] for window in windows)
 
 
+def check_stream_continuity(metrics):
+    if not metrics.get('delivery_mode','buffered').startswith('streaming'):return
+    underruns=metrics.get('stream_underruns')
+    if type(underruns) is not int or underruns<0:raise RuntimeError('Missing stream continuity evidence')
+    if underruns:raise RuntimeError('Paired audio/video buffering interrupted normal speech')
+    if metrics.get('stream_cleanup_errors'):raise RuntimeError('Stream media cleanup failed')
+
+
 async def run(root,avatar_id,minutes,rounds):
     clock.install_rtc_clock()
     folder=root/'outputs/acceptance'/time.strftime('%Y%m%d-%H%M%S')
@@ -125,6 +133,9 @@ async def run(root,avatar_id,minutes,rounds):
                 while not signal.is_set():
                     response=await client.get(f'/api/sessions/{session_id}/metrics',timeout=10);response.raise_for_status()
                     metrics=response.json();report['queue_depth_max']=max(report['queue_depth_max'],metrics['queue_depth'])
+                    check_stream_continuity(metrics)
+                    report['stream_underruns']=max(report.get('stream_underruns',0),metrics.get('stream_underruns',0))
+                    report['delivery_mode']=metrics.get('delivery_mode','buffered')
                     if metrics['queue_depth']>2: errors.append('Playback queue exceeded two pending chunks')
                     report['video_queue_depth_max']=max(report.get('video_queue_depth_max',0),metrics.get('video_queue_depth',0))
                     report['video_frames_dropped']=metrics.get('video_frames_dropped',0)
@@ -163,8 +174,13 @@ async def run(root,avatar_id,minutes,rounds):
                     if event.get('type')=='turn_complete': break
                 if not answer_text or report['non_silent_audio_frames']<=baseline:
                     raise RuntimeError('Round completed without an answer and received speech')
+                current=await client.get(f'/api/sessions/{session_id}/metrics');current.raise_for_status()
+                turn_metrics=current.json();check_stream_continuity(turn_metrics)
                 report['rounds'].append({'index':index+1,'seconds':clock.monotonic()-turn_start,
-                                         'received_speech_frames':report['non_silent_audio_frames']-baseline})
+                                         'received_speech_frames':report['non_silent_audio_frames']-baseline,
+                                         'delivery_mode':turn_metrics.get('delivery_mode','buffered'),
+                                         'stream_underruns':turn_metrics.get('stream_underruns',0),
+                                         'server_timing':turn_metrics.get('last_turn_timing')})
                 print(f'Completed real dialogue round {index+1}/{rounds}',flush=True)
             # Verify interruption, then require another successful round on the same peer.
             send({'type':'chat_text','text':'请用三句话介绍这次本机数字人演示。'})
