@@ -1,6 +1,8 @@
 """Private local emotional voice worker; references are resolved by profile ID."""
 import io
 import threading
+import itertools
+from contextlib import asynccontextmanager
 from fastapi import FastAPI,HTTPException
 from fastapi.responses import Response,JSONResponse
 from pydantic import BaseModel,Field
@@ -11,9 +13,21 @@ from backend.model_jobs import expired
 from backend.storage import Store,sha256
 from backend.photo_profiles import migrate_profile,source_path
 from backend.voice.engine import VoiceEngine
+from backend.gpu import stream_owner,StreamCancellation
+from backend.stream_jobs import AudioSpool,stream_folder,check_space
+from backend.stream_worker import StreamWorker,worker_lifespan
 
 ROOT=project_root();store=Store(ROOT);engine=VoiceEngine(ROOT);lock=threading.Lock()
-app=FastAPI(title='Local emotional voice')
+
+
+@asynccontextmanager
+async def lifespan(application):
+    from backend import warmup
+    warmup.start(lambda: engine.warmup(), lock, 'voice-warmup')
+    async with worker_lifespan(application):yield
+
+
+app=FastAPI(title='Local emotional voice',lifespan=lifespan)
 
 
 class VoiceRequest(BaseModel):
@@ -24,20 +38,65 @@ class VoiceRequest(BaseModel):
     generation:int|None=Field(default=None,ge=0)
 
 
+class VoiceStreamRequest(VoiceRequest):
+    session_id:str
+    generation:int=Field(ge=0)
+    index:int=Field(ge=0)
+    token:str=Field(min_length=64,max_length=64)
+
+
 @app.exception_handler(NotReady)
 async def not_ready(request,error):
-    return JSONResponse(status_code=409,content={'detail':str(error)})
+    return JSONResponse(status_code=409,content={'detail':str(error),'code':getattr(error,'code',None)})
 
 
 @app.get('/health')
 def health():return {'status':'ok','loaded':engine.voice is not None,'engine':'CosyVoice3'}
 
 
+@app.post('/tts/stream')
+def tts_stream(body:VoiceStreamRequest):
+    stream_owner(ROOT,body.session_id,body.token)
+    manifest=migrate_profile(store.manifest(body.avatar_id));avatar=store.avatar_dir(body.avatar_id)
+    if not manifest['voice'].get('confirmed'):raise NotReady('请先试听并确认参考声音')
+    reference=source_path(avatar,manifest['voice']['reference'])
+    if sha256(reference)!=manifest['voice']['reference_sha256']:raise HTTPException(400,'参考声音校验失败')
+    folder=stream_folder(ROOT,body.session_id,body.generation,body.index)
+    def produce(disconnected):
+        cancelled=StreamCancellation(ROOT,body.session_id,body.generation,body.token,disconnected)
+        spool=None;native=None
+        with lock:
+            try:
+                if cancelled():raise InterruptedError('当前回答已停止')
+                check_space(ROOT,folder)
+                native=iter(engine.stream_synthesize(body.text,reference,body.emotion,avatar/'voice',cancelled,
+                    session_id=body.session_id,token=body.token))
+                first=next(native)
+                spool=AudioSpool(folder,engine.voice.sample_rate)
+                yield dict(type='start',rate=engine.voice.sample_rate)
+                for pcm in itertools.chain([first],native):
+                    if cancelled():raise InterruptedError('当前回答已停止')
+                    if len(pcm):
+                        check_space(ROOT,folder)
+                        yield spool.append(pcm)
+                report=engine.last_stream_report
+                spool.finish(report=report)
+                state=spool.state()
+                yield dict(type='complete',samples=state['samples'],chunks=state['chunks'],report=report)
+            except BaseException as error:
+                if spool is not None:spool.finish(error=str(error)[:500])
+                raise
+            finally:
+                if native is not None:native.close()
+    return StreamWorker(produce,dict(generation=body.generation,sentence_index=body.index),
+                        job_path=folder/'voice-job.json').response()
+
+
 @app.post('/tts')
 def tts(body:VoiceRequest):
-    cancelled=lambda:expired(ROOT,body.session_id,body.generation)
     with lock:
         try:
+            cancelled=StreamCancellation(ROOT,body.session_id,body.generation,None,lambda:False)
             if cancelled():raise InterruptedError('当前回答已停止')
             manifest=migrate_profile(store.manifest(body.avatar_id));folder=store.avatar_dir(body.avatar_id)
             if not manifest['voice'].get('confirmed'):raise NotReady('请先试听并确认参考声音')

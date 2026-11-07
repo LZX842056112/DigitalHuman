@@ -10,10 +10,14 @@ from scripts import services
 
 
 def plan(port,name='studio'):
+    source=('from http.server import HTTPServer,BaseHTTPRequestHandler\n'
+            'class Handler(BaseHTTPRequestHandler):\n'
+            ' def do_GET(self):\n'
+            '  self.send_response(200);self.end_headers();self.wfile.write(b"ready")\n'
+            ' def log_message(self,*args):pass\n'
+            f'HTTPServer(("127.0.0.1",{port}),Handler).serve_forever()\n')
     return {'name':name,'port':port,'cwd':None,'health':'/health',
-            'command':[sys.executable,'-u','-c',
-                       f'from http.server import HTTPServer,SimpleHTTPRequestHandler; '
-                       f'HTTPServer(("127.0.0.1",{port}),SimpleHTTPRequestHandler).serve_forever()']}
+            'command':[sys.executable,'-u','-c',source]}
 
 
 def free_port():

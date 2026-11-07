@@ -1,5 +1,6 @@
 import asyncio
 import httpx
+from contextlib import aclosing
 from backend.emotion import normalize_emotion
 
 
@@ -20,3 +21,25 @@ class PortraitClient:
     async def animate(self,avatar_id,session_id,generation,index,emotion):
         return await self._post('/render',{'avatar_id':avatar_id,'session_id':session_id,
             'generation':generation,'index':index,'emotion':normalize_emotion(emotion)})
+
+    async def stream(self,avatar_id,session_id,generation,index,emotion,*,root,token):
+        from backend.stream_jobs import iter_worker_events,stream_folder,video_chunk_path
+        request=dict(avatar_id=avatar_id,session_id=session_id,generation=generation,index=index,
+                     emotion=normalize_emotion(emotion),token=token)
+        chunks=frames=0
+        folder=await asyncio.to_thread(stream_folder,root,session_id,generation,index)
+        async with aclosing(iter_worker_events(self.base_url,'/render/stream',request,
+                job_path=folder/'portrait-job.json')) as events:
+            async for event in events:
+                if event['type']=='start':
+                    if event.get('fps')!=25:raise ValueError('画面流帧率无效')
+                elif event['type']=='chunk':
+                    if (event.get('chunk_index')!=chunks or event.get('frame_start')!=frames
+                            or type(event.get('frames')) is not int or not 1<=event['frames']<=25):
+                        raise ValueError('画面分块重复、缺失或乱序')
+                    path=video_chunk_path(folder,chunks)
+                    if not await asyncio.to_thread(path.is_file):raise ValueError('画面分块尚未发布')
+                    event={**event,'video':path};chunks+=1;frames+=event['frames']
+                elif event['type']=='complete':
+                    if not chunks or event.get('report',{}).get('frames')!=frames:raise ValueError('画面流未完整结束')
+                yield event

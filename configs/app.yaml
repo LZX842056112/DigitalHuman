@@ -16,6 +16,18 @@ asr:
   device: cpu
   compute_type: int8
 runtime:
+  photo_streaming: false
+  # 画面提速开关。portrait_sampling_steps 越少动作扩散越快（模型原生默认 50）；
+  # portrait_frame_batch 是逐帧渲染的批大小，显存不足时会自动回退为逐帧。
+  # portrait_frame_stride=2 表示每两帧只算一张再重复写出（25 fps 不变，动作略粗）。
+  # 想完全回到原质量：steps 写 50、batch 写 1、stride 写 1。
+  portrait_sampling_steps: 12
+  portrait_frame_batch: 4
+  portrait_frame_stride: 2
+  # 首段最多这么多个字就在逗号处切开，让第一段更早进入播放队列；0 表示不切。
+  first_clause_chars: 14
+  # 回答模型按 SSE 流式返回，边生成边按句切分；关掉则等整段回答生成完再合成。
+  dialogue_streaming: true
   distro: DigitalHuman
   disk_reserve_gib: 10
   idle_timeout_seconds: 900

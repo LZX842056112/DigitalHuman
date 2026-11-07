@@ -2,6 +2,10 @@ class NotReady(RuntimeError):
     """The requested real model or asset has not passed preparation."""
 
 
+class StreamMemoryUnavailable(NotReady):
+    code='stream_memory'
+
+
 class PipelineError(RuntimeError):
     def __init__(self, stage: str, message: str):
         self.stage = stage

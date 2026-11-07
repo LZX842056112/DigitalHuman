@@ -1,6 +1,7 @@
 import io
 import asyncio
 import wave
+from contextlib import aclosing
 import httpx
 import numpy as np
 from backend.errors import NotReady
@@ -25,6 +26,33 @@ def normalize_speech(pcm, target_rms=.1, peak_limit=.891):
 class VoiceClient:
     def __init__(self, base_url="http://127.0.0.1:9880"):
         self.base_url = base_url
+
+    async def stream(self,text,avatar_dir,profile,*,root,session_id,generation,index,token,emotion='neutral'):
+        from backend.stream_jobs import iter_worker_events,AudioSpool,stream_folder
+        if not profile.get('confirmed'):raise NotReady('请先试听并确认参考声音')
+        request=dict(text=text,avatar_id=avatar_dir.name,session_id=session_id,generation=generation,
+                     index=index,token=token,emotion=normalize_emotion(emotion))
+        spool=None;chunks=samples=0;rate=None
+        folder=await asyncio.to_thread(stream_folder,root,session_id,generation,index)
+        async with aclosing(iter_worker_events(self.base_url,'/tts/stream',request,
+                job_path=folder/'voice-job.json')) as events:
+            async for event in events:
+                if event['type']=='start':
+                    rate=event.get('rate')
+                    if type(rate) is not int or rate<=0:raise ValueError('声音流采样率无效')
+                    spool=await asyncio.to_thread(AudioSpool,folder)
+                elif event['type']=='chunk':
+                    if (event.get('chunk_index')!=chunks or event.get('sample_start')!=samples
+                            or event.get('rate')!=rate or type(event.get('samples')) is not int or event['samples']<=0):
+                        raise ValueError('声音分块重复、缺失或乱序')
+                    pcm=await asyncio.to_thread(spool.read,event)
+                    chunks+=1;samples+=len(pcm);event={**event,'pcm':pcm}
+                elif event['type']=='complete':
+                    state=await asyncio.to_thread(spool.state)
+                    if (not chunks or event.get('samples')!=samples or event.get('chunks')!=chunks
+                            or not state['finished'] or state['error'] or state['samples']!=samples):
+                        raise ValueError('声音流未完整结束')
+                yield event
 
     async def synthesize(self, text, avatar_dir, profile, *, emotion='neutral', session_id=None, generation=None):
         if not profile.get("confirmed"):

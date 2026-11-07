@@ -2,6 +2,7 @@
 import hashlib
 import json
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel,Field
@@ -12,9 +13,21 @@ from backend.model_jobs import expired,sentence_paths
 from backend.errors import NotReady
 from backend.portrait.assets import portrait_version
 from backend.portrait.engine import PhotoEngine
+from backend.gpu import stream_owner,StreamCancellation
+from backend.stream_jobs import stream_folder
+from backend.stream_worker import StreamWorker,worker_lifespan
 
 ROOT=project_root();store=Store(ROOT);engine=PhotoEngine(ROOT);lock=threading.Lock()
-app=FastAPI(title='Local photo animation')
+
+
+@asynccontextmanager
+async def lifespan(application):
+    from backend import warmup
+    warmup.start(lambda: engine.warmup(), lock, 'portrait-warmup')
+    async with worker_lifespan(application):yield
+
+
+app=FastAPI(title='Local photo animation',lifespan=lifespan)
 
 
 class PrepareRequest(BaseModel):
@@ -28,10 +41,14 @@ class RenderRequest(PrepareRequest):
     emotion:str='neutral'
 
 
+class StreamRenderRequest(RenderRequest):
+    token:str=Field(min_length=64,max_length=64)
+
+
 @app.exception_handler(NotReady)
 async def not_ready(request,error):
     from fastapi.responses import JSONResponse
-    return JSONResponse(status_code=409,content={'detail':str(error)})
+    return JSONResponse(status_code=409,content={'detail':str(error),'code':getattr(error,'code',None)})
 
 
 @app.get('/health')
@@ -43,6 +60,26 @@ def profile(avatar_id):
     photo=source_path(folder,manifest['photo'])
     if sha256(photo)!=manifest['sources'][manifest['photo']]:raise ValueError('照片来源校验失败')
     return manifest,folder,photo
+
+
+@app.post('/render/stream')
+def render_stream(body:StreamRenderRequest):
+    stream_owner(ROOT,body.session_id,body.token)
+    manifest,avatar,photo=profile(body.avatar_id)
+    cache=source_path(avatar,manifest['portrait']['folder'])
+    if read_json(cache/'source.json')['metadata']['photo_sha256']!=sha256(photo):
+        raise HTTPException(400,'照片缓存与当前照片不匹配')
+    folder=stream_folder(ROOT,body.session_id,body.generation,body.index)
+    def produce(disconnected):
+        cancelled=StreamCancellation(ROOT,body.session_id,body.generation,body.token,disconnected)
+        with lock:
+            yield dict(type='start',fps=25)
+            yield from engine.stream_render(cache,folder,body.emotion,cancelled,
+                session_id=body.session_id,token=body.token)
+            if cancelled():raise InterruptedError('当前回答已停止')
+            yield dict(type='complete',report=engine.last_stream_report)
+    return StreamWorker(produce,dict(generation=body.generation,sentence_index=body.index),
+                        job_path=folder/'portrait-job.json').response()
 
 
 @app.post('/prepare')
@@ -62,10 +99,10 @@ def prepare(body:PrepareRequest):
 
 @app.post('/render')
 def render(body:RenderRequest):
-    cancelled=lambda:expired(ROOT,body.session_id,body.generation)
     with lock:
         audio,video=sentence_paths(ROOT,body.session_id,body.generation,body.index)
         try:
+            cancelled=StreamCancellation(ROOT,body.session_id,body.generation,None,lambda:False)
             if cancelled():raise InterruptedError('当前回答已停止')
             manifest,folder,photo=profile(body.avatar_id)
             cache=source_path(folder,manifest['portrait']['folder'])

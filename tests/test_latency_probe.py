@@ -3,6 +3,16 @@ import numpy as np
 import pytest
 
 
+def test_stream_continuity_gate_rejects_hidden_sentence_gaps():
+    from scripts.acceptance import check_stream_continuity
+    check_stream_continuity({})
+    check_stream_continuity({'delivery_mode':'streaming_parallel','stream_underruns':0})
+    with pytest.raises(RuntimeError):check_stream_continuity({'delivery_mode':'streaming_serial'})
+    with pytest.raises(RuntimeError):check_stream_continuity({'delivery_mode':'streaming_parallel','stream_underruns':1})
+    with pytest.raises(RuntimeError):check_stream_continuity({'delivery_mode':'streaming_serial','stream_underruns':0,
+                                                           'stream_cleanup_errors':['文件未回收']})
+
+
 def test_speech_meter_ignores_idle_and_keeps_first_non_silent_frame(monkeypatch):
     from scripts import benchmark_latency
     now=[100.]
