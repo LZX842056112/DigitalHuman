@@ -63,26 +63,35 @@ end = min(len(features), sequence.shape[1] - overlap_v2 - 6)   # 非最终
 - 传输用 VP8，但关掉了噪声抑制、把最大量化步长压到 32，避免衣服纹理被当成噪声抹平。
 - 码率按尺寸给：512 长边 4 Mbps、768 给 6 Mbps、1024 给 8 Mbps。
 
-## 3. 模型二：CosyVoice 3，6 秒克隆一个声音
+## 3. 模型二：CosyVoice 3，8 秒克隆一个声音
 
-### 3.1 zero-shot 与 instruct2
+### 3.1 两条克隆路径：zero-shot 与 instruct2
 
-项目用的是 `inference_instruct2`：参考音频 + 一句指令 + 待合成文本。指令来自情感映射：
+CosyVoice3 有两条路，区别在于 LLM 看不看参考语音：
 
-| 情感 | 指令 |
-|---|---|
-| neutral | 空 |
-| happy | 请非常开心地说一句话。 |
-| sad | 请非常伤心地说一句话。 |
-| angry | 请非常生气地说一句话。 |
+| 路径 | 进 LLM 的提示 | 音色来自 | 语气来自 |
+|---|---|---|---|
+| zero-shot | 参考语音 token + 参考文本 | flow（提示 mel + campplus 嵌入） | 参考语音本身 |
+| instruct2 | 只有一句指令 | 同上 | 指令文本 |
 
-同一个参考音频 + 同一个情感，说话人缓存键是固定的：
+`frontend_instruct2` 会显式删掉 `llm_prompt_speech_token`，模型听不到参考的节奏，只能照着指令说；zero-shot 保留这些 token，停顿、语速、音高起伏都更贴参考，代价是没法用"请非常开心地说"这类指令。
+
+项目默认 `voice_clone_mode: hybrid`：
+
+| 情感 | 路径 | 理由 |
+|---|---|---|
+| neutral | zero-shot | 日常回答占绝大多数，优先像本人 |
+| happy / sad / angry | instruct2 | 指令能明确改变语气 |
+
+zero-shot 需要参考音频的转写。CosyVoice3 的提示格式是 `You are a helpful assistant.<|endofprompt|>` 接参考文本，准备人物时用本地 faster-whisper 生成并写进 `voice.text`；没有转写（或不足 4 个字）时这条路径不启用，自动回到 instruct2。`voice_clone_mode` 写 `zero_shot` 会让情绪句也走零样本（最像，但情绪指令失效），写 `instruct` 则全程走指令（情绪准，音色略远）。
+
+说话人缓存键因此带上路径与文本：
 
 ```
-key = sha256(参考音频哈希 + 指令 + 模型修订)
+key = sha256(参考音频哈希 + 指令 + 模型修订 + 克隆路径 + 参考文本)
 ```
 
-第一次 `add_zero_shot_spk` 后把说话人张量存成 `prompt-<key>.safetensors`，之后直接加载。所以换情感会换一份缓存，但同一情感的第二句不用再提取音色。
+第一次 `add_zero_shot_spk` 后把说话人张量存成 `prompt-<key>.safetensors`，同一参考、同一情感、同一路径的第二句直接加载。
 
 ### 3.2 流式合成的三段
 
@@ -102,7 +111,18 @@ LLM 逐 token 出 ─► flow 逐块生成 mel ─► hift 逐块出波形
 2. 用 5 ms 前瞻的限幅器压住瞬态，释放时间 50 ms。
 3. 整句共用这个增益。
 
-好处是停顿不会被放大、语气动态保留；坏处是如果参考音频前半句特别轻，整句会偏响。参考片段的选择因此很重要：`choose_reference` 会挑语音占比 > 55%、爆音 < 1%、响度接近目标值的 6 秒窗口。
+好处是停顿不会被放大、语气动态保留；坏处是如果参考音频前半句特别轻，整句会偏响。参考片段的选择因此很重要，见 3.4。
+
+### 3.4 参考音频：相似度的上限在这里
+
+克隆的天花板由参考片段决定，模型只能复制它听到的东西。取样分四步：
+
+1. **解码**：整条音轨按 24 kHz 解码，不再用 16 kHz。以前存成 16 kHz 再让模型升到 24 kHz，8 kHz 以上是空的——齿音和明亮度恰在这个频段。
+2. **筛窗**：0.25 s 网格铺满全片，门限取本轨 p90 电平的 12%（旧版是绝对值 0.008，安静素材一个窗都过不了），并排除削波超过 1% 的窗。
+3. **选代表**：得分最高的候选里均匀取 8 个窗做 campplus 嵌入，选离质心最近的一个。音乐垫底、第二个说话人、偏远麦克风位置都会偏离质心。
+4. **整理**：去直流、首尾 10 ms 淡入淡出、把有效语音拉到 RMS 0.08（峰值 ≤ 0.95）。flow 直接吃这段 log-mel，电平偏低的参考会让生成的声音发薄。
+
+量化验证用 `scripts/voice-similarity.py`：同一段音频自比是 1.000，同一人不同句子一般在 0.7 以上，换人通常掉到 0.6 以下。它用的是模型自己的 campplus 编码和 80 维 Kaldi fbank，与克隆时喂给 flow 的完全一致。
 
 ## 4. 模型三：Qwen2.5-3B，以及为什么让 emotion 排在 text 前面
 
@@ -303,6 +323,8 @@ available_samples = min(len(pcm), frames * 1920)
 | `portrait_frame_stride` | 2 | — | 1 = 全帧计算（最清晰最慢） | 2 是速度/画质折中；3 会明显发飘 |
 | `first_clause_chars` | 14 | 首段更长、更自然 | 首段更短、开口更早 | 10–16；0 关闭 |
 | `dialogue_streaming` | true | — | 整段生成，便于对比基线 | 除排错外保持 true |
+| `voice_reference_seconds` | 8 | 更像、合成略慢（flow 的提示变长） | 更快、细节更少 | 6–10；低于 6 音色明显变粗 |
+| `voice_clone_mode` | hybrid | — | — | 最像用 zero_shot，情绪优先用 instruct |
 | `photo_streaming` | false | — | — | 验收通过前不要开 |
 | `dialogue.max_tokens` | 128 | 回答更长 | 更短 | 配合"最多两句"提示词 |
 

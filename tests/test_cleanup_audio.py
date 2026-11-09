@@ -53,7 +53,7 @@ def test_voice_worker_keeps_wav_body_and_metrics_headers(voice_worker, monkeypat
     pcm = np.asarray([-.5, 0., .5], dtype=np.float32)
     calls = []
 
-    def synthesize(text, reference, emotion, cache, cancelled):
+    def synthesize(text, reference, emotion, cache, cancelled, **options):
         calls.append((text, reference.name, emotion, cache.name, cancelled()))
         return pcm, 24000, {'generation_seconds': 1.25, 'peak_vram_mib': 512.}
 
@@ -72,7 +72,7 @@ def test_voice_worker_keeps_wav_body_and_metrics_headers(voice_worker, monkeypat
 
 @pytest.mark.parametrize('error, status', [(ValueError, 400), (InterruptedError, 409)])
 def test_voice_worker_keeps_error_status(voice_worker, monkeypatch, error, status):
-    def synthesize(*args):
+    def synthesize(*args, **options):
         raise error('fixture failure')
 
     monkeypatch.setattr(voice_worker, 'engine', SimpleNamespace(synthesize=synthesize))

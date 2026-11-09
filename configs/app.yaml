@@ -28,6 +28,13 @@ runtime:
   first_clause_chars: 14
   # 回答模型按 SSE 流式返回，边生成边按句切分；关掉则等整段回答生成完再合成。
   dialogue_streaming: true
+  # 参考声音片段的长度（秒）。片段越长，音色和说话节奏越贴近，但画面模型每块
+  # 都要多读这段提示，合成会略慢；改完需要重新准备人物才会重新取样。
+  voice_reference_seconds: 8
+  # 声音克隆方式：hybrid 平语用零样本（声音最像）、有情绪时用指令；zero_shot 全程
+  # 零样本（最像，但情绪指令失效）；instruct 全程指令（情绪准，但音色略远）。
+  # 零样本需要参考音频的转写，准备人物时由本地语音识别自动生成。
+  voice_clone_mode: hybrid
   distro: DigitalHuman
   disk_reserve_gib: 10
   idle_timeout_seconds: 900

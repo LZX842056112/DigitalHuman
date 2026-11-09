@@ -85,8 +85,12 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
     "source_sha256": "...",       // 来源视频哈希，换视频即失效
     "reference_sha256": "...",    // 参考音频哈希，换音频即失效
     "start_seconds": 12.5,
-    "duration_seconds": 6,
-    "sample_rate": 48000
+    "duration_seconds": 8,
+    "sample_rate": 24000,
+    "reference_version": 2,       // 取样流程版本，旧版本会重建一次
+    "text": "大家好，今天想和大家聊聊……",  // 参考音频转写，零样本克隆用
+    "text_language": "zh",
+    "text_model": "faster-whisper-small"
   },
   "validation": { "photo": true, "voice": true },
   "portrait": { "folder": "portrait/<24hex>", "width": 768, "height": 1024, "fps": 25 },
@@ -140,12 +144,16 @@ idle.mkv      4 秒待机循环（100 帧）
 ```
 POST /avatars/{id}/build
    └─ 线程池（单线程）
-        ├─ prepare_voice: 解码音轨 → choose_reference(6s) → voice/reference.wav
+        ├─ prepare_voice: 解码 24 kHz 音轨 → choose_reference(Ns, 说话人向量选段)
+        │                 → clean_reference(去直流/淡入淡出/统一电平) → voice/reference.wav
+        │                 → faster-whisper 转写 → voice.text
         ├─ portrait.prepare: 人脸检测 → 特征提取 → 缓存 npz → idle.mkv
         ├─ 未确认声音? → status=voice_pending, job=waiting(reference_confirmation) → 返回
         ├─ 已确认 → /tts 合成试听句 → voice/sample.wav
         └─ 资产哈希 → status=ready, job=complete
 ```
+
+参考音频的取样不是简单找最响的一段：先用相对本轨电平的门限筛掉静音与削波窗，再按 0.25 s 网格铺满全片候选，取说话人向量（campplus）离短名单质心最近的一段——音乐垫底、第二个说话人或偏远麦克风的位置会被这条规则排掉。转写失败只记 `transcription_error`，不影响准备，克隆自动退回指令模式。
 
 "准备"与"会话"互斥：`busy()` 在 `building / sessions / loading / deleting` 任一非空时返回 409。这样避免了"准备到一半就被拿去对话"的半成品状态。
 
@@ -475,7 +483,7 @@ DecodeF3D        → 解码成人脸 RGB
 
 ## 18. 测试策略
 
-250 个测试函数（约 310 项用例，含参数化），分四层：
+268 个测试函数（约 327 项用例，含参数化），分四层：
 
 1. **纯函数**：切句、情感映射、响度归一、分块校验。
 2. **契约测试**：客户端与 worker 的事件顺序、错误码、缓存身份。

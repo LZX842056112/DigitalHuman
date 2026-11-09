@@ -117,8 +117,10 @@ def test_verified_reference_cache_does_not_decode_again(tmp_path,monkeypatch):
     from backend import media
     from backend.storage import sha256
     store,person,target=reference_person(tmp_path)
+    from backend.media import REFERENCE_VERSION
     person['voice'].update(source_sha256=person['sources'][person['voice_video']],
-                           reference_sha256=sha256(target),confirmed=True)
+                           reference_sha256=sha256(target),confirmed=True,
+                           reference_version=REFERENCE_VERSION)
     store.write_manifest(person['id'],person)
     monkeypatch.setattr(media,'read_audio',lambda *a,**k:pytest.fail('decoded valid cached reference'))
     assert media.prepare_voice(store,person['id'])==person

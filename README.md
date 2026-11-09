@@ -96,10 +96,18 @@ studio :7860   backend.api.app
 | `runtime.portrait_frame_batch` | `4` | 离线渲染的批大小，显存不足自动退回逐帧 |
 | `runtime.portrait_frame_stride` | `2` | 每 N 帧只算一张再重复写出，25 fps 不变 |
 | `runtime.first_clause_chars` | `14` | 首段在逗号处提前切出的字数上限，`0` 关闭 |
+| `runtime.voice_reference_seconds` | `8` | 参考声音取样长度（秒），越长越像但合成略慢 |
+| `runtime.voice_clone_mode` | `hybrid` | `hybrid` 平语零样本、有情绪走指令；`zero_shot` 全程零样本；`instruct` 全程指令 |
 | `runtime.idle_timeout_seconds` | `900` | 会话空闲回收 |
 | `runtime.disk_reserve_gib` | `10` | 流式生成要求保留的磁盘空间 |
 
 想完全回到原始画质：`portrait_sampling_steps: 50`、`portrait_frame_batch: 1`、`portrait_frame_stride: 1`。这三个值由渲染端每次重读配置文件，改完下一句即生效，不必重启。流式开关只在会话开始时读取，必须重启 studio。
+
+声音更像本人有三步：
+
+1. **重新取样**：`voice_reference_seconds`（默认 8）决定参考片段长度。取样会按本轨电平筛窗、按说话人向量选段、去直流并统一电平，参考音频按 24 kHz 保存。取样式一旦变化（`reference_version` 不匹配），旧参考音频会自动重建一次。
+2. **选克隆方式**：`voice_clone_mode` 默认 `hybrid`——平语走零样本，需要参考音频的转写；准备人物时本地 faster-whisper 自动生成并写进 `voice.text`，没有转写就退回指令模式。这个值在声音服务启动时读取，改完要重启 voice（`.\scripts\restart-and-warm.ps1` 会一起重启）。
+3. **量化验证**：`.\scripts\voice-similarity.ps1 -AvatarId <id> -Diagnose`。默认比对人物目录里的 `voice/sample.wav`；加 `-Text "..."` 会先让声音服务合成再比对。它用模型自己的 campplus 编码给出参考音频与合成音频的余弦相似度。
 
 ## 目录结构
 
@@ -107,8 +115,9 @@ studio :7860   backend.api.app
 backend/
   api/app.py              studio：人物、任务、会话、WebRTC 协商、静态前端
   dialogue/client.py      对话模型客户端（SSE + 增量 JSON 提取）与语音识别
-  voice/                  CosyVoice 引擎、HTTP 服务、客户端
+  voice/                  CosyVoice 引擎、克隆路径、相似度度量、HTTP 服务、客户端
   portrait/               Ditto 引擎、分块流、照片缓存、HTTP 服务、客户端
+  asr.py                  参考音频转写（本地 faster-whisper，CPU）
   transport/
     photo_session.py      一轮对话的编排：切句、派发、打断、计时
     photo_timeline.py     以 PCM 为主时钟的句级播放时间线
@@ -121,8 +130,8 @@ backend/
   photo_profiles.py       人物资料、素材校验、资产哈希
   storage.py              原子 JSON、哈希、人物目录
 frontend/src/             React 19 + Vite 前端（photo-main.tsx 是主界面）
-scripts/                  安装、启动、自检、验收、基准、预热脚本
-tests/                    250 个测试函数（约 310 项用例）
+scripts/                  安装、启动、自检、验收、基准、预热、声音相似度脚本
+tests/                    268 个测试函数（约 327 项用例）
 configs/                  app.yaml、模型清单与两套 Python 依赖
 docs/                     PRD、代码设计、技术讲解
 data/                     人物资料与运行产物（不入库）
