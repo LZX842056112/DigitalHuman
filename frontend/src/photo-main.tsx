@@ -4,7 +4,9 @@ import {api,json} from './api';
 import {RemoteAudioOutput,observePlayback,observeRtcSynchronization,type AudioOutputState} from './native-audio-output';
 import './photo-style.css';
 
-type Avatar={id:string;name:string;status:string;photo:string;voice_video:string;voice:{confirmed:boolean;reference?:string};validation:{photo:boolean;voice:boolean};portrait?:{folder:string;width:number;height:number;fps:number};last_job_id?:string};
+type Variant={id:string;label:string;photo:string;portrait?:{folder:string;width:number;height:number;fps:number}|null;validation:{photo:boolean}};
+type Settings={tone:string;expression:string};
+type Avatar={id:string;name:string;status:string;photo:string;voice_video:string;voice:{confirmed:boolean;reference?:string};validation:{photo:boolean;voice:boolean};portrait?:{folder:string;width:number;height:number;fps:number};variants?:Variant[];active_variant?:string;settings?:Settings;last_job_id?:string};
 type Job={id:string;status:string;stage:string;progress:number;error?:string;message?:string};
 type Message={role:string;text:string;partial?:boolean};
 type RtcProbe={state:string;samples?:number;maxAbsOffsetMs?:number;p95AbsOffsetMs?:number;video?:{framesDecoded?:number;framesDropped?:number;framesPerSecond?:number}};
@@ -13,6 +15,8 @@ type RuntimeProbe={delivery_mode?:string;stream_underruns?:number;paired_buffer_
 const milliseconds=(value:number|null|undefined)=>typeof value==='number'?value.toFixed(1)+' 毫秒':'未测量';
 const timingStatusName:Record<string,string>={running:'正在处理',completed:'已完成',interrupted:'已打断',failed:'未完成'};
 const deliveryName:Record<string,string>={buffered:'整句准备',streaming_serial:'串行分块',streaming_parallel:'并行分块'};
+const toneOptions:[string,string][]=[['natural','自然'],['warm','亲切'],['professional','专业'],['lively','活泼']];
+const expressionOptions:[string,string][]=[['natural','自然'],['smile','微笑'],['serious','严肃'],['surprise','惊讶']];
 const activeJob=(job:Job|null)=>!!job&&['queued','running'].includes(job.status);
 const statusName:Record<string,string>={imported:'素材已导入',preparing:'正在准备',voice_pending:'请试听参考声音',ready:'可以开始对话',failed:'准备未完成'};
 const stageName:Record<string,string>={queued:'等待处理',import:'导入素材',audio:'提取参考声音',photo:'准备人物画面',voice:'检查克隆声音',complete:'准备完成',source_integrity:'检查素材',media:'读取照片和声音',reference_confirmation:'请试听参考声音',voice_reference:'准备参考声音',portrait:'准备人物画面',voice_and_audio_expression:'检查声音和口型',ready:'准备完成',gpu_busy:'等待本机任务完成'};
@@ -27,6 +31,9 @@ export default function PhotoApp(){
  const [volume,setVolume]=useState(1),[soundState,setSoundState]=useState<AudioOutputState>('off'),[soundError,setSoundError]=useState('');
  const [rtcProbe,setRtcProbe]=useState<RtcProbe|null>(null),[turnTiming,setTurnTiming]=useState<TurnTiming|null>(null);
  const [runtimeProbe,setRuntimeProbe]=useState<RuntimeProbe|null>(null);
+ const [settings,setSettings]=useState<Settings>({tone:'natural',expression:'natural'});
+ const [outfitOptions,setOutfitOptions]=useState<{wear:boolean}>({wear:false});
+ const [outfitPrompt,setOutfitPrompt]=useState(''),[outfitFile,setOutfitFile]=useState<File|null>(null);
  const mounted=useRef(true),operation=useRef(false),sessionInFlight=useRef(false),isRecording=useRef(false),refreshVersion=useRef(0),jobVersion=useRef(0),sessionVersion=useRef(0);
  const peer=useRef<RTCPeerConnection|null>(null),channel=useRef<RTCDataChannel|null>(null),sid=useRef(''),local=useRef<MediaStream|null>(null);
  const audioOutput=useRef<RemoteAudioOutput|null>(null),remoteAudio=useRef<HTMLAudioElement>(null),referenceAudio=useRef<HTMLAudioElement>(null),video=useRef<HTMLVideoElement>(null),scroll=useRef<HTMLDivElement>(null);
@@ -88,6 +95,9 @@ export default function PhotoApp(){
   send({type:'interrupt'});releaseSession();setConnected(false);setConnecting(false);setRecording(false);setMicAllowed(false);setGenerating(false);setSoundError('');setStatus('已断开');
  }
  useEffect(()=>{
+  void api('/outfit/options').then(value=>{if(mounted.current)setOutfitOptions(value)}).catch(()=>{});
+ },[]);
+ useEffect(()=>{
   mounted.current=true;void refresh().catch(e=>{if(mounted.current)setError(e.message)});
   const timer=setInterval(()=>void refresh().catch(()=>{}),5000);
   return()=>{mounted.current=false;++refreshVersion.current;++jobVersion.current;clearInterval(timer);releaseSession()};
@@ -108,6 +118,7 @@ export default function PhotoApp(){
   return()=>{active=false;clearInterval(timer)};
  },[job?.id,job?.status]);
  useEffect(()=>{scroll.current?.scrollTo({top:scroll.current.scrollHeight,behavior:'smooth'})},[messages,status]);
+ useEffect(()=>{const value=current?.settings;if(value)setSettings({tone:value.tone,expression:value.expression})},[current?.id,current?.settings?.tone,current?.settings?.expression]);
  async function mutate(action:()=>Promise<void>){
   if(operation.current||locked||sid.current)return;
   operation.current=true;setBusy(true);setError('');
@@ -128,6 +139,47 @@ export default function PhotoApp(){
  function replaceFile(kind:'photo'|'voice-video',file:File|undefined){
   if(!current||!file)return;const id=current.id,data=new FormData();data.set(kind==='photo'?'photo':'voice_video',file);
   void mutate(async()=>{await api(avatarUrl(id)+'/'+kind,{method:'PUT',body:data});setJob(null);await refresh(id);setStatus('素材已更新。请重新准备人物。')});
+ }
+ function applySettings(patch:Partial<Settings>){
+  if(!current||working)return;
+  const previous=settings,next={...settings,...patch};setSettings(next);
+  if(connected&&send({type:'settings',...patch}))return;
+  void api(avatarUrl(current.id)+'/settings',{method:'PUT',...json(patch)})
+   .then(()=>refresh(current.id))
+   .catch(error=>{setSettings(previous);setError((error as Error).message)});
+ }
+ function activateVariant(variantId:string){
+  if(!current||locked)return;const id=current.id;
+  void mutate(async()=>{await api(avatarUrl(id)+'/variants/'+variantId+'/active',{method:'PUT'});await refresh(id);setStatus('已切换造型，下次连接生效。')});
+ }
+ function addVariant(file:File|undefined){
+  if(!current||!file)return;const id=current.id,data=new FormData();data.set('photo',file);
+  void mutate(async()=>{await api(avatarUrl(id)+'/variants',{method:'POST',body:data});await refresh(id);setStatus('已添加造型。请点击“准备人物”。')});
+ }
+ function chooseGarment(file:File|undefined){
+  setOutfitFile(file||null);
+ }
+ async function applyGarment(){
+  if(!current||!outfitFile||locked)return;const id=current.id;
+  const data=new FormData();data.set('garment',outfitFile);
+  if(outfitPrompt.trim())data.set('prompt',outfitPrompt.trim());
+  setStatus('正在按上传的衣服换装，约需一分钟…');
+  void mutate(async()=>{
+   const person=await api(avatarUrl(id)+'/outfit/wear',{method:'POST',body:data});
+   setOutfitFile(null);
+   await refresh(id);
+   const label=(person.variants||[]).slice(-1)[0]?.label||'换装';
+   setStatus(`已生成「${label}」。请点击“准备人物”后切换使用。`);
+  });
+ }
+ function replaceVariant(variantId:string,file:File|undefined){
+  if(!current||!file)return;const id=current.id,data=new FormData();data.set('photo',file);
+  void mutate(async()=>{await api(avatarUrl(id)+'/variants/'+variantId,{method:'PUT',body:data});setJob(null);await refresh(id);setStatus('造型照片已更新。请重新准备人物。')});
+ }
+ function deleteVariant(variantId:string){
+  if(!current||locked)return;const id=current.id;
+  if(!window.confirm('确认删除这套造型？照片与它的画面缓存会从人物目录移除。'))return;
+  void mutate(async()=>{await api(avatarUrl(id)+'/variants/'+variantId,{method:'DELETE'});await refresh(id)});
  }
  function deleteAvatar(){
   if(!current||locked)return;
@@ -210,12 +262,23 @@ export default function PhotoApp(){
   <header><div className="photo-brand"><span><Volume2 size={22}/></span><div><b>照片数字人</b><small>本机照片对话</small></div></div><p>一张照片，一段声音，开始对话。</p></header>
   <div className="photo-workspace">
    <aside className="photo-panel photo-assets"><h2>人物素材</h2><div className="photo-toolbar"><select aria-label="选择人物" value={selected} disabled={locked} onChange={event=>{setSelected(event.target.value);setMessages([]);setText('');setStatus('等待连接')}}>{!avatars.length&&<option value="">请导入人物</option>}{avatars.map(avatar=><option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select><button aria-label="删除人物" title="删除人物" disabled={!current||locked} onClick={deleteAvatar}><Trash2 size={15}/></button></div>
-    {current&&<><div className="photo-thumbnail"><img src={fileUrl(current.id,current.photo)} alt="当前人物照片"/></div><p className="photo-asset-status">{statusName[current.status]||'等待准备'}</p><fieldset disabled={locked}><label>更换照片<input type="file" accept="image/*" onChange={event=>{replaceFile('photo',event.target.files?.[0]);event.target.value=''}}/></label><label>声音来源视频<input type="file" accept="video/*" onChange={event=>{replaceFile('voice-video',event.target.files?.[0]);event.target.value=''}}/></label></fieldset><p className="photo-hint">{current.voice_video.split('/').pop()}<br/>视频仅用于提取声音。需至少六秒清晰语音，音轨最长十分钟。</p><button className="photo-primary photo-wide" disabled={locked} onClick={build}>{working?<Loader2 size={15} className="photo-spin"/>:<Play size={15}/>}准备人物</button>
+    {current&&<><div className="photo-thumbnail"><img src={fileUrl(current.id,current.photo)} alt="当前人物照片"/></div><p className="photo-asset-status">{statusName[current.status]||'等待准备'}</p>
+    <section className="photo-variants" aria-label="造型"><div className="photo-variant-list">
+     {(current.variants||[]).map(variant=><div key={variant.id} className={'photo-variant'+(variant.id===current.active_variant?' active':'')}><button type="button" title={variant.portrait?'切换到这个造型':'该造型尚未准备'} disabled={locked||!variant.portrait} onClick={()=>activateVariant(variant.id)}><img src={fileUrl(current.id,variant.photo)} alt={variant.label}/></button><div className="photo-variant-tools"><label title="替换照片"><Upload size={11}/><input type="file" accept="image/*" disabled={locked} onChange={event=>{replaceVariant(variant.id,event.target.files?.[0]);event.target.value=''}}/></label><button type="button" title="删除造型" disabled={locked||(current.variants||[]).length<2} onClick={()=>deleteVariant(variant.id)}><Trash2 size={11}/></button></div><small>{variant.label}</small></div>)}
+     <label className="photo-variant-add" title="添加造型"><Upload size={14}/><input type="file" accept="image/*" disabled={locked} onChange={event=>{addVariant(event.target.files?.[0]);event.target.value=''}}/><span>添加</span></label>
+    </div><p className="photo-hint">造型=一张照片。可以换装生成，也可以上传另一张照片；切换后下次连接生效。</p></section>
+    <section className="photo-outfit" aria-label="换装"><div className="photo-outfit-row"><span>描述</span><input className="photo-outfit-prompt" aria-label="衣服描述" placeholder="选填，如：牛仔外套" value={outfitPrompt} maxLength={40} disabled={locked||!outfitOptions.wear} onChange={event=>setOutfitPrompt(event.target.value)}/></div><div className="photo-outfit-row"><span>服装</span><label className={'photo-outfit-upload'+(outfitFile?' has-file':'')} title="上传一张服装图片，按图给人物换装"><Upload size={12}/>{outfitOptions.wear?(outfitFile?'已选：'+outfitFile.name:'上传服装图片'):'未装换装模型'}<input type="file" accept="image/*" disabled={locked||!outfitOptions.wear} onChange={event=>{chooseGarment(event.target.files?.[0]);event.target.value=''}}/></label></div><button type="button" className="photo-outfit-apply" disabled={locked||!outfitOptions.wear||!outfitFile} onClick={()=>void applyGarment()}>开始换装</button><p className="photo-hint">上传你自己的服装图片，按图给照片里的人物换装；填一句描述更准。脸和背景不动，结果作为一套新造型，准备后切用。</p></section>
+    <section className="photo-style" aria-label="语气与表情">
+     <div className="photo-style-row"><span>语气</span><div className="photo-segments">{toneOptions.map(([value,label])=><button key={value} type="button" className={settings.tone===value?'on':''} disabled={working} onClick={()=>applySettings({tone:value})}>{label}</button>)}</div></div>
+     <div className="photo-style-row"><span>表情</span><div className="photo-segments">{expressionOptions.map(([value,label])=><button key={value} type="button" className={settings.expression===value?'on':''} disabled={working} onClick={()=>applySettings({expression:value})}>{label}</button>)}</div></div>
+     <p className="photo-hint">语气改措辞与平语发音；表情只在平语回答时生效，有情绪的回答按情绪演。连接中改动立即生效。</p>
+    </section>
+    <fieldset disabled={locked}><label>更换照片<input type="file" accept="image/*" onChange={event=>{replaceFile('photo',event.target.files?.[0]);event.target.value=''}}/></label><label>声音来源视频<input type="file" accept="video/*" onChange={event=>{replaceFile('voice-video',event.target.files?.[0]);event.target.value=''}}/></label></fieldset><p className="photo-hint">{current.voice_video.split('/').pop()}<br/>视频仅用于提取声音。需至少六秒清晰语音，音轨最长十分钟。</p><button className="photo-primary photo-wide" disabled={locked} onClick={build}>{working?<Loader2 size={15} className="photo-spin"/>:<Play size={15}/>}准备人物</button>
     {job&&<div className="photo-job" role="status"><div>{stageName[job.stage]||'准备人物'}<span>{Math.round(Math.max(0,Math.min(1,job.progress||0))*100)}%</span></div><progress max={1} value={Math.max(0,Math.min(1,job.progress||0))}/><p>{job.error||job.message||(activeJob(job)?'正在本机处理。':job.status==='waiting'?(job.stage==='reference_confirmation'?'请试听参考声音，确认后继续准备。':'等待你完成当前操作。'):job.status==='complete'?'准备已完成。':job.status==='failed'?'准备未完成，请重试。':'等待下一步操作。')}</p></div>}
     <section className="photo-voice"><h3>参考声音 · {current.voice.confirmed?'已确认':'待确认'}</h3>{current.voice.reference?<><audio ref={referenceAudio} controls={!sessionActive} preload="none" src={fileUrl(current.id,current.voice.reference)} aria-label="参考声音试听" onPlay={event=>{if(sessionInFlight.current)event.currentTarget.pause()}}/><button className="photo-wide" disabled={locked||current.voice.confirmed} onClick={confirmVoice}><Check size={14}/>{current.voice.confirmed?'已确认声音':'确认声音并继续准备'}</button></>:<p className="photo-hint">准备人物后，在此试听参考声音。</p>}</section></>}
     <details open={!current}><summary><Upload size={14}/>导入新人物</summary><form onSubmit={importFiles}><fieldset disabled={locked}><label>人物名称<input name="name" defaultValue="新数字人" maxLength={80} required/></label><label>人物照片<input name="photo" type="file" accept="image/*" required/></label><label>声音来源视频<input name="voice_video" type="file" accept="video/*" required/></label><button className="photo-wide" type="submit" disabled={locked}>导入素材</button></fieldset></form></details>
    </aside>
-   <main className="photo-main"><div className="photo-view-heading"><div><small>照片对话</small><h1>{current?.name||'创建你的数字人'}</h1></div><span>{connected?'已连接':connecting?'正在连接':'未连接'}</span></div><div className="photo-view"><video ref={video} autoPlay playsInline muted hidden={!connected} aria-label="人物实时画面" onClick={()=>{void video.current?.play().catch(()=>{});void enableSound()}}/>{!connected&&(current?<img src={fileUrl(current.id,current.photo)} alt="人物原照片"/>:<div className="photo-placeholder">请先导入照片和声音来源视频。</div>)}</div><div className="photo-session-actions"><button className="photo-primary" onClick={()=>void connect()} disabled={locked||current?.status!=='ready'}>{connecting?<Loader2 size={15} className="photo-spin"/>:<Play size={15}/>}开始对话</button><button disabled={!sessionActive} onClick={disconnect}><X size={15}/>断开连接</button></div><div className="photo-audio"><button onClick={()=>void enableSound()} disabled={!sessionActive}><Volume2 size={15}/>{soundState==='running'?'声音已开启':'开启声音'}</button><audio ref={remoteAudio} controls autoPlay aria-label="数字人实时语音" onVolumeChange={event=>{setVolume(event.currentTarget.volume);audioOutput.current?.setVolume(event.currentTarget.volume)}}/><label>音量<input aria-label="回答音量" type="range" min={0} max={1} step={.05} value={volume} onChange={event=>{const value=+event.target.value;setVolume(value);output().setVolume(value)}}/><span>{Math.round(volume*100)}%</span></label>{soundError&&<p role="alert">{soundError}</p>}</div><p className="photo-hint">照片按原比例显示。人物使用自然语气，随对话自动表达情感。</p></main>
+   <main className="photo-main"><div className="photo-view-heading"><div><small>照片对话</small><h1>{current?.name||'创建你的数字人'}</h1></div><span>{connected?'已连接':connecting?'正在连接':'未连接'}</span></div><div className="photo-view"><video ref={video} autoPlay playsInline muted hidden={!connected} aria-label="人物实时画面" onClick={()=>{void video.current?.play().catch(()=>{});void enableSound()}}/>{!connected&&(current?<img src={fileUrl(current.id,current.photo)} alt="人物原照片"/>:<div className="photo-placeholder">请先导入照片和声音来源视频。</div>)}</div><div className="photo-session-actions"><button className="photo-primary" onClick={()=>void connect()} disabled={locked||current?.status!=='ready'}>{connecting?<Loader2 size={15} className="photo-spin"/>:<Play size={15}/>}开始对话</button><button disabled={!sessionActive} onClick={disconnect}><X size={15}/>断开连接</button></div><div className="photo-audio"><button onClick={()=>void enableSound()} disabled={!sessionActive}><Volume2 size={15}/>{soundState==='running'?'声音已开启':'开启声音'}</button><audio ref={remoteAudio} controls autoPlay aria-label="数字人实时语音" onVolumeChange={event=>{setVolume(event.currentTarget.volume);audioOutput.current?.setVolume(event.currentTarget.volume)}}/><label>音量<input aria-label="回答音量" type="range" min={0} max={1} step={.05} value={volume} onChange={event=>{const value=+event.target.value;setVolume(value);output().setVolume(value)}}/><span>{Math.round(volume*100)}%</span></label>{soundError&&<p role="alert">{soundError}</p>}</div><p className="photo-hint">照片按原比例显示。人物按所选语气与表情呈现；有情绪的回答优先按情绪演。</p></main>
    <aside className="photo-panel photo-conversation"><h2>与数字人对话</h2><p className="photo-hint">输入文字，或按住麦克风按钮说话。</p><div className="photo-messages" ref={scroll}>{messages.length?messages.map((message,index)=><div key={index} className={'photo-message '+message.role}><small>{message.role==='user'?'你':'数字人'}</small><p>{message.text}</p></div>):<div className="photo-chat-empty"><Volume2 size={30}/><p>从一句问候开始。</p></div>}</div><p className="photo-status" role="status">{generating&&<Loader2 size={13} className="photo-spin"/>}{status}</p><form className="photo-chat-form" onSubmit={chat}><textarea aria-label="对话文字" placeholder="输入你想说的话…" value={text} maxLength={500} disabled={!connected||recording} onChange={event=>setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();chat(event)}}}/><button aria-label="发送文字" type="submit" disabled={!connected||generating||recording||!text.trim()}><Send size={17}/></button></form><div className="photo-talk"><button disabled={!connected||!micAllowed} className={recording?'photo-recording':''} onPointerDown={event=>{if(event.button!==0)return;event.currentTarget.setPointerCapture(event.pointerId);startRecording()}} onPointerUp={stopRecording} onPointerCancel={stopRecording} onLostPointerCapture={stopRecording} onKeyDown={event=>{if((event.key===' '||event.key==='Enter')&&!event.repeat){event.preventDefault();startRecording()}}} onKeyUp={event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();stopRecording()}}} onBlur={stopRecording}><Mic size={15}/>{recording?'松开结束':'按住说话'}</button><button disabled={!connected} onClick={interrupt}><Square size={13}/>打断</button></div>{connected&&!micAllowed&&<p className="photo-hint">麦克风未授权。可以继续输入文字。</p>}</aside>
   </div>
   {diagnostics&&connected&&<section className="photo-panel" aria-label="运行诊断"><h2>运行诊断</h2>

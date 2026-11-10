@@ -19,6 +19,7 @@ from backend.model_jobs import sentence_paths, session_folder
 from backend.photo_profiles import source_path
 from backend.portrait.client import PortraitClient
 from backend.storage import atomic_json, safe_id
+from backend.style import merge_settings, settings_of
 from backend.transport.photo_timeline import PhotoTimeline, SentenceClip, StreamingSentence
 from backend.voice.client import VoiceClient
 
@@ -350,14 +351,15 @@ class PhotoSession:
                 self.emit('reply_partial',text=''.join(feed.items))
 
         try:
+            tone=settings_of(self.manifest)['tone']
             stream=getattr(self.dialogue,'stream',None)
             if stream is None or not self.config.get('runtime',{}).get('dialogue_streaming',True):
-                reply=parse_reply(await self.dialogue.answer(text,list(self.history)))
+                reply=parse_reply(await self.dialogue.answer(text,list(self.history),tone))
                 feed.add(feed.splitter.feed(reply.text));feed.add(feed.splitter.flush())
                 self._phase_timing(generation,'llm_ms',started)
                 publish();record(reply);feed.finish(reply=reply)
                 return
-            async with aclosing(stream(text,list(self.history))) as events:
+            async with aclosing(stream(text,list(self.history),tone)) as events:
                 async for event in events:
                     kind=event.get('type')
                     if kind=='emotion':
@@ -445,7 +447,8 @@ class PhotoSession:
             if voice_task.done() and not voice_task.cancelled() and voice_task.exception():raise voice_task.exception()
             started=clock.monotonic()
             async with aclosing(self.portrait.stream(self.manifest['id'],self.id,generation,index,emotion,
-                root=self.root,token=self._stream_lease.token)) as events:
+                expression=settings_of(self.manifest)['expression'],root=self.root,
+                token=self._stream_lease.token)) as events:
                 async for event in events:
                     if event['type']=='start':self.timeline.update_stream(generation,clip,'start_video')
                     elif event['type']=='chunk':
@@ -584,6 +587,12 @@ class PhotoSession:
             kind = data.get('type')
             if kind == 'interrupt':
                 self.interrupt()
+            elif kind == 'settings':
+                update = {key: data[key] for key in ('tone', 'expression') if key in data}
+                settings = merge_settings(self.manifest, update)
+                self.manifest['settings'] = settings
+                atomic_json(self.avatar_dir / 'avatar.json', self.manifest)
+                self.emit('status', text='语气与表情已更新')
             elif kind == 'chat_text':
                 text = str(data.get('text', '')).strip()[:500]
                 if not text:
@@ -725,7 +734,8 @@ class PhotoSession:
                         if not self._current(generation):
                             return
                         phase_started = clock.monotonic()
-                        await self._model(self.portrait.animate(self.manifest['id'], self.id, generation, index, emotion), generation)
+                        await self._model(self.portrait.animate(self.manifest['id'], self.id, generation, index, emotion,
+                            expression=settings_of(self.manifest)['expression']), generation)
                         if index == 0:
                             self._phase_timing(generation, 'portrait_first_ms', phase_started)
                         if not self._current(generation):

@@ -1,0 +1,97 @@
+"""One source of truth for the user-facing tone and expression presets.
+
+Tone changes how the character speaks (wording plus, on neutral turns, the
+CosyVoice instruction). Expression changes the face only on neutral turns -
+a turn with a real emotion always wins. Neither dimension touches the photo
+cache identity, so switching them never rebuilds portrait assets.
+"""
+import numpy as np
+
+TONES=('natural','warm','professional','lively')
+EXPRESSIONS=('natural','smile','serious','surprise')
+DEFAULT_SETTINGS={'tone':'natural','expression':'natural'}
+
+# Spoken delivery. Empty for natural so the default neutral path keeps using
+# zero-shot cloning (the closest timbre) instead of an instruction.
+TONE_INSTRUCTIONS={
+    'natural':'',
+    'warm':'请用亲切温和的语气说一句话。',
+    'professional':'请用专业、平稳、克制的语气说一句话。',
+    'lively':'请用活泼明快的语气说一句话。',
+}
+
+# Wording. Inserted after the opening sentence in the dialogue system prompt.
+TONE_PROMPTS={
+    'natural':'',
+    'warm':'语气亲切温和，像熟悉的朋友：多用“你”“我们”，可以有一句轻声的关心，不要撒娇、不要网络流行语。',
+    'professional':'语气专业克制：先给结论，再给一句理由或步骤；不用口语填充词，不用感叹号，不寒暄。',
+    'lively':'语气活泼明快：句子短、节奏快，可以用一个轻快的语气词，不要夸张、不要卖萌。',
+}
+
+# Ditto's eight classes are Angry0, Disgust1, Fear2, Happy3, Neutral4,
+# Sad5, Surprise6, Contempt7. `_get_emo_avg` takes the softmax of the listed
+# labels, so a tuple gives equal weights and an ndarray gives exact weights.
+_EXPRESSIONS={
+    'natural':{'emo':4,'exp':1.0},
+    'smile':{'emo':(3,4),'exp':1.0},
+    'serious':{'emo':(4,5),'exp':0.75},
+    'surprise':{'emo':6,'exp':0.85},
+}
+# Neutral 88% + Sad 12% reads as a settled, unsmiling face; an even mix reads
+# as sadness. The exact split is an initial value pending calibration.
+_SERIOUS=0.12
+
+
+def normalize_tone(value):
+    return value if isinstance(value,str) and value in TONES else 'natural'
+
+
+def normalize_expression(value):
+    return value if isinstance(value,str) and value in EXPRESSIONS else 'natural'
+
+
+def settings_of(manifest):
+    raw=(manifest or {}).get('settings') or {}
+    return {'tone':normalize_tone(raw.get('tone')),
+            'expression':normalize_expression(raw.get('expression'))}
+
+
+def merge_settings(current, update):
+    """Validate one partial update; unknown keys or values are rejected."""
+    if not isinstance(update,dict):raise ValueError('设置格式无效')
+    unknown=set(update)-{'tone','expression'}
+    if unknown:raise ValueError('未知的设置项：'+'、'.join(sorted(unknown)))
+    result=settings_of(current)
+    if 'tone' in update:
+        if update['tone'] not in TONES:raise ValueError('未知的语气风格')
+        result['tone']=update['tone']
+    if 'expression' in update:
+        if update['expression'] not in EXPRESSIONS:raise ValueError('未知的表情')
+        result['expression']=update['expression']
+    return result
+
+
+def voice_instruction_clause(tone):
+    return TONE_INSTRUCTIONS[normalize_tone(tone)]
+
+
+def tone_clause(tone):
+    return TONE_PROMPTS[normalize_tone(tone)]
+
+
+def expression_emo(value):
+    """Return the Ditto emotion condition for one preset.
+
+    natural and surprise stay plain integers so the default path is exactly
+    what it was before this feature existed.
+    """
+    preset=normalize_expression(value)
+    if preset=='serious':
+        row=np.zeros((1,8),np.float32)
+        row[0,4]=1.-_SERIOUS;row[0,5]=_SERIOUS
+        return row
+    return _EXPRESSIONS[preset]['emo']
+
+
+def expression_exp_gain(value):
+    return _EXPRESSIONS[normalize_expression(value)]['exp']

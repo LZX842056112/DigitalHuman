@@ -35,6 +35,14 @@ runtime:
   # 零样本（最像，但情绪指令失效）；instruct 全程指令（情绪准，但音色略远）。
   # 零样本需要参考音频的转写，准备人物时由本地语音识别自动生成。
   voice_clone_mode: hybrid
+  # 语气（亲切/专业/活泼）是否也作用于声音。默认开：选非"自然"语气时，平语从
+  # 零样本切到指令模式，语气能被听出来，代价是音色略远离参考；语气为"自然"
+  # 时仍是零样本，不受影响。
+  tone_voice: true
+  # 每个数字人最多保存几套造型（不同穿搭/场景的照片），每套一份照片缓存。
+  max_photo_variants: 8
+  # 仅诊断用：固定动作扩散的随机种子，便于同一台机器上做 A/B；不承诺跨设备复现。
+  portrait_seed: null
   distro: DigitalHuman
   disk_reserve_gib: 10
   idle_timeout_seconds: 900

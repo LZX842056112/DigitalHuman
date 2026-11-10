@@ -13,7 +13,8 @@ import cv2
 import numpy as np
 import torch
 from backend.config import load_config
-from backend.emotion import portrait_emotion
+from backend.emotion import normalize_emotion,portrait_emotion
+from backend.style import expression_emo,expression_exp_gain
 from backend.gpu import gpu_operation,session_operation,check_stream_headroom
 from backend.errors import StreamMemoryUnavailable
 from backend.media import read_audio
@@ -45,10 +46,41 @@ def runtime_quality(root):
     return quality
 
 
-def photo_options(defaults, emotion, quality=None):
-    options={**defaults,'max_size':1024,'ch_info':None,'emo':portrait_emotion(emotion),
-        'use_d_keys':{'exp':1.,'pitch':.25,'yaw':.25,'roll':.25,'t':0.},'fade_type':'s',
-        'overall_ctrl_info':{},'online_mode':False}
+_SEED_CACHE={}
+
+
+def runtime_seed(root):
+    """Diagnostic only: a fixed seed helps A/B on one machine, not across GPUs."""
+    path=Path(root)/'configs/app.yaml'
+    try:stamp=path.stat().st_mtime_ns
+    except OSError:return None
+    cached=_SEED_CACHE.get(str(path))
+    if cached and cached[0]==stamp:return cached[1]
+    try:value=(load_config(Path(root)).get('runtime') or {}).get('portrait_seed')
+    except Exception:value=None
+    seed=int(value) if isinstance(value,int) else None
+    _SEED_CACHE[str(path)]=(stamp,seed)
+    return seed
+
+
+def apply_seed(seed):
+    if seed is not None:torch.manual_seed(seed)
+
+
+def photo_options(defaults, emotion, quality=None, *, expression='natural'):
+    """Build render options; a real emotion always beats the preset expression.
+
+    The preset only shapes neutral turns: it picks the Ditto emotion condition
+    and the expression gain of the driving signal. Emotional turns keep the
+    label the dialogue model chose and the full gain, so the face still reacts
+    to what is being said instead of freezing on one look.
+    """
+    neutral=normalize_emotion(emotion)=='neutral'
+    options={**defaults,'max_size':1024,'ch_info':None,
+        'emo':expression_emo(expression) if neutral else portrait_emotion(emotion),
+        'use_d_keys':{'exp':expression_exp_gain(expression) if neutral else 1.,
+                      'pitch':.25,'yaw':.25,'roll':.25,'t':0.},
+        'fade_type':'s','overall_ctrl_info':{},'online_mode':False}
     steps=(quality or {}).get('sampling_steps')
     if steps:options['sampling_timesteps']=int(steps)
     return options
@@ -235,13 +267,15 @@ class PhotoEngine:
         yield from ready
         self._stream_audio_samples=samples;self._stream_audio_rate=rate
 
-    def stream_render(self,cache_folder,folder,emotion='neutral',cancelled=None,*,session_id,token):
+    def stream_render(self,cache_folder,folder,emotion='neutral',cancelled=None,*,session_id,token,
+                      expression='natural'):
         from collections import deque
         from backend.stream_jobs import video_chunk_path,check_space
         timing=StageTiming();started=clock.monotonic();waiting=started
         with session_operation(self.root,session_id,token,cancelled),torch.inference_mode():
             timing.values['gpu_wait_ms']=(clock.monotonic()-waiting)*1000
             try:
+                apply_seed(runtime_seed(self.root))
                 with timing.measure('load_ms'):self._load()
                 from core.atomic_components.condition_handler import ConditionHandler
                 from core.utils.get_mask import get_mask
@@ -250,7 +284,8 @@ class PhotoEngine:
                 with timing.measure('gpu_transfer_ms'):self._activate()
                 if self.networks:torch.cuda.reset_peak_memory_stats()
                 with timing.measure('photo_cache_ms'):source=self._cached_source(cache_folder)
-                quality=runtime_quality(self.root);options=photo_options(self.defaults,emotion,quality)
+                quality=runtime_quality(self.root);options=photo_options(self.defaults,emotion,quality,
+                    expression=expression)
                 condition=ConditionHandler(**self.condition_type);condition.setup(source,options['emo'],ch_info=None)
                 # Preserve the pinned offline diffusion/fusion parameters and
                 # publish only stable prefixes, as the upstream chunk pipeline
@@ -388,18 +423,20 @@ class PhotoEngine:
                      photo_options(self.defaults,'neutral',runtime_quality(self.root)),cancelled,idle=True,
                      batch=runtime_quality(self.root)['frame_batch'])
 
-    def render(self, cache_folder, audio, output, emotion='neutral', cancelled=None):
+    def render(self, cache_folder, audio, output, emotion='neutral', cancelled=None, *, expression='natural'):
         started=clock.monotonic();timing=StageTiming();waiting=clock.monotonic()
         with gpu_operation(self.root,cancelled),torch.inference_mode():
             timing.values['gpu_wait_ms']=(clock.monotonic()-waiting)*1000
             try:
+                apply_seed(runtime_seed(self.root))
                 with timing.measure('load_ms'):self._load()
                 with timing.measure('gpu_transfer_ms'):self._activate()
                 torch.cuda.reset_peak_memory_stats()
                 metadata=read_json(Path(cache_folder)/'source.json')['metadata']
                 with timing.measure('photo_cache_ms'):
                     source=load_cache(Path(cache_folder),{**self.version,'photo_sha256':metadata['photo_sha256']})
-                quality=runtime_quality(self.root);options=photo_options(self.defaults,emotion,quality)
+                quality=runtime_quality(self.root);options=photo_options(self.defaults,emotion,quality,
+                    expression=expression)
                 from core.atomic_components.condition_handler import ConditionHandler
                 condition=ConditionHandler(**self.condition_type)
                 condition.setup(source,options['emo'],ch_info=None)

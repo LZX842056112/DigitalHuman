@@ -56,7 +56,7 @@ def model_io(tmp_path, monkeypatch):
         def __init__(self, base_url):
             pass
 
-        async def prepare(self, avatar_id):
+        async def prepare(self, avatar_id, variant_id=None):
             calls['portrait'] += 1
             folder = tmp_path/'data/avatars'/avatar_id/'portrait/key'
             folder.mkdir(parents=True, exist_ok=True)
@@ -121,7 +121,10 @@ def test_import_photo_fields_and_original_video_is_not_public(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         avatar_id = imported(client)
         person = client.get('/api/avatars/' + avatar_id).json()
-        assert person['schema_version'] == 2 and person['mode'] == 'photo'
+        assert person['schema_version'] == 3 and person['mode'] == 'photo'
+        assert person['settings'] == {'tone': 'natural', 'expression': 'natural'}
+        assert len(person['variants']) == 1 and person['active_variant'] == person['variants'][0]['id']
+        assert person['variants'][0]['photo'] == person['photo']
         assert person['voice'] == {'confirmed': False, 'language': 'zh'}
         assert person['validation'] == {'photo': False, 'voice': False}
         assert person['portrait'] is None and person['last_job_id']
@@ -234,11 +237,11 @@ def test_legacy_get_does_not_write_and_first_build_keeps_backup(tmp_path, model_
     avatar_id = old['id']; folder = store.avatar_dir(avatar_id)
     original = (folder/'avatar.json').read_bytes()
     with TestClient(create_app(tmp_path)) as client:
-        assert client.get('/api/avatars/' + avatar_id).json()['schema_version'] == 2
-        assert client.get('/api/avatars').json()[0]['schema_version'] == 2
+        assert client.get('/api/avatars/' + avatar_id).json()['schema_version'] == 3
+        assert client.get('/api/avatars').json()[0]['schema_version'] == 3
         assert (folder/'avatar.json').read_bytes() == original
         wait_job(client, client.post(f'/api/avatars/{avatar_id}/build').json()['job_id'])
-        assert store.manifest(avatar_id)['schema_version'] == 2
+        assert store.manifest(avatar_id)['schema_version'] == 3
         assert (folder/'avatar.legacy.json').read_bytes() == original
         assert (folder/'source/body.png').read_bytes() == b'legacy-photo'
 
@@ -504,3 +507,154 @@ def test_changed_portrait_version_rejects_ready_and_regenerates(tmp_path, model_
         rebuilt = prepare_ready(client, avatar_id)
         assert rebuilt['status'] == 'ready' and model_io['portrait'] == 2
         assert client.post('/api/sessions', json={'avatar_id': avatar_id}).status_code == 201
+
+
+def test_add_variant_then_switch_uses_its_own_cache(tmp_path, model_io, monkeypatch):
+    from backend.api.app import create_app
+    from backend.photo_profiles import migrate_profile, resolve_variant
+    Portrait = sys.modules['backend.portrait.client'].PortraitClient
+    catalog = json.loads((tmp_path/'configs/photo-models.json').read_text())
+
+    async def prepare(self, avatar_id, variant_id=None):
+        store = Store(tmp_path)
+        person = migrate_profile(store.manifest(avatar_id))
+        variant = resolve_variant(person, variant_id)
+        folder = store.avatar_dir(avatar_id)
+        digest = sha256(folder/variant['photo'])
+        name = 'k'+digest[:16]
+        cache = folder/'portrait'/name
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache/'source.npz').write_bytes(b'state')
+        (cache/'idle.mkv').write_bytes(b'idle')
+        metadata = {'photo_sha256': digest,
+                    'model_revision': catalog['models']['ditto']['revision'],
+                    'code_commit': catalog['sources']['ditto']['commit'], 'max_size': 1024}
+        (cache/'source.json').write_text(json.dumps({'schema_version': 1, 'metadata': metadata,
+            'file': 'source.npz', 'sha256': sha256(cache/'source.npz')}))
+        (cache/'ready.json').write_text(json.dumps({'metadata': metadata,
+            'idle_sha256': sha256(cache/'idle.mkv'), 'width': 640, 'height': 800,
+            'video_format': 'h264_rgb_lossless_v1'}))
+        return {'folder': f'portrait/{name}', 'width': 640, 'height': 800, 'fps': 25}
+
+    monkeypatch.setattr(Portrait, 'prepare', prepare)
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        client.put(f'/api/avatars/{avatar_id}/voice', json={'confirmed': True})
+        job = client.post(f'/api/avatars/{avatar_id}/build').json()['job_id']
+        assert wait_job(client, job)['status'] == 'complete'
+        response = client.post(f'/api/avatars/{avatar_id}/variants',
+            files={'photo': ('second.png', b'photo-two', 'image/png')})
+        assert response.status_code == 201, response.text
+        person = response.json()
+        second = [item for item in person['variants'] if item['photo'] != person['variants'][0]['photo']][0]
+        assert person['active_variant'] != second['id']
+        assert client.put(f"/api/avatars/{avatar_id}/variants/{second['id']}/active").status_code == 409
+        job = client.post(f'/api/avatars/{avatar_id}/build').json()['job_id']
+        assert wait_job(client, job)['status'] == 'complete'
+        switched = client.put(f"/api/avatars/{avatar_id}/variants/{second['id']}/active")
+        assert switched.status_code == 200, switched.text
+        person = switched.json()
+        assert person['active_variant'] == second['id'] and person['photo'] == second['photo']
+        assert person['status'] == 'ready'
+        folders = {item['portrait']['folder'] for item in person['variants']}
+        assert len(folders) == 2
+        for folder in folders:
+            assert f'{folder}/idle.mkv' in person['artifact_hashes']
+        assert 'voice/sample.wav' in person['artifact_hashes']
+        assert client.post('/api/sessions', json={'avatar_id': avatar_id}).status_code == 201
+
+
+def test_settings_put_persists_and_validates(tmp_path, model_io):
+    from backend.api.app import create_app
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        response = client.put(f'/api/avatars/{avatar_id}/settings', json={'tone': 'lively'})
+        assert response.status_code == 200
+        assert response.json()['settings'] == {'tone': 'lively', 'expression': 'natural'}
+        person = client.get('/api/avatars/' + avatar_id).json()
+        assert person['settings'] == {'tone': 'lively', 'expression': 'natural'}
+        assert client.put(f'/api/avatars/{avatar_id}/settings',
+            json={'expression': 'grin'}).status_code == 400
+        assert client.get('/api/avatars/' + avatar_id).json()['settings']['expression'] == 'natural'
+
+
+def _fake_outfit(command, **kwargs):
+    """Stand in for the outfit subprocess: write a PNG and report success."""
+    from pathlib import Path
+    from PIL import Image
+    out = Path(command[command.index('--out') + 1])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.full((16, 16, 3), 200, np.uint8)).save(out)
+    return SimpleNamespace(stdout=json.dumps({'label': '换装·藏青', 'mode': 'recolor'}),
+                           stderr='', returncode=0)
+
+
+def test_outfit_adds_a_variant_without_switching(tmp_path, model_io, monkeypatch):
+    from pathlib import Path
+    import backend.api.app as app_module
+    from backend.api.app import create_app
+    monkeypatch.setattr(app_module.subprocess, 'run', _fake_outfit)
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        before = client.get('/api/avatars/' + avatar_id).json()
+        response = client.post(f'/api/avatars/{avatar_id}/outfit',
+                               json={'mode': 'recolor', 'color': '#1e2a44'})
+        assert response.status_code == 201, response.text
+        person = response.json()
+        assert len(person['variants']) == len(before['variants']) + 1
+        assert person['variants'][-1]['label'] == '换装·藏青'
+        assert person['active_variant'] == before['active_variant']
+        assert person['status'] == before['status']
+        assert person['variants'][-1]['portrait'] is None
+        # The edited photo is a real source file, not a reference to the old one.
+        folder = Store(tmp_path).avatar_dir(avatar_id)
+        assert (folder / person['variants'][-1]['photo']).is_file()
+        assert person['variants'][-1]['photo'] != before['photo']
+
+
+def test_outfit_rejects_unknown_mode_missing_model_and_changed_photo(tmp_path, model_io, monkeypatch):
+    import backend.api.app as app_module
+    from backend.api.app import create_app
+    monkeypatch.setattr(app_module.subprocess, 'run', _fake_outfit)
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        assert client.post(f'/api/avatars/{avatar_id}/outfit',
+                           json={'mode': 'paint'}).status_code == 400
+        assert client.post(f'/api/avatars/{avatar_id}/outfit',
+                           json={'mode': 'generate', 'style': 'shirt'}).status_code == 503
+        person = client.get('/api/avatars/' + avatar_id).json()
+        photo = Store(tmp_path).avatar_dir(avatar_id) / person['photo']
+        photo.write_bytes(photo.read_bytes() + b'x')
+        assert client.post(f'/api/avatars/{avatar_id}/outfit',
+                           json={'mode': 'recolor', 'color': '#1e2a44'}).status_code == 400
+
+
+def test_wear_requires_the_reference_model(tmp_path, model_io):
+    from backend.api.app import create_app
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        response = client.post(f'/api/avatars/{avatar_id}/outfit/wear',
+                               files={'garment': ('g.png', b'plain', 'image/png')})
+        assert response.status_code == 503
+        assert '参考模型' in response.json()['detail']
+
+
+def test_wear_adds_a_variant_from_an_uploaded_garment(tmp_path, model_io, monkeypatch):
+    import backend.api.app as app_module
+    from backend.api.app import create_app
+    from backend import outfit as outfit_module
+    adapter = tmp_path/'models/outfit/ip-adapter/models'
+    (adapter/'image_encoder').mkdir(parents=True)
+    (adapter/outfit_module.ADAPTER_WEIGHT).write_bytes(b'weights')
+    (adapter/'image_encoder/model.safetensors').write_bytes(b'encoder')
+    (tmp_path/'models/outfit/inpaint').mkdir(parents=True)
+    (tmp_path/'models/outfit/inpaint/model_index.json').write_text('{}')
+    monkeypatch.setattr(app_module.subprocess, 'run', _fake_outfit)
+    with TestClient(create_app(tmp_path)) as client:
+        avatar_id = imported(client)
+        response = client.post(f'/api/avatars/{avatar_id}/outfit/wear',
+                               files={'garment': ('denim.png', b'denim-bytes', 'image/png')})
+        assert response.status_code == 201, response.text
+        person = response.json()
+        assert person['variants'][-1]['label'] == '换装·藏青'
+        assert person['active_variant'] != person['variants'][-1]['id']

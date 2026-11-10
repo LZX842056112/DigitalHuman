@@ -44,7 +44,7 @@ def test_prepare_keeps_the_existing_cache_key_and_response(tmp_path, portrait_ca
         return {'width': 640, 'height': 480}
 
     monkeypatch.setattr(service, 'ROOT', tmp_path)
-    monkeypatch.setattr(service, 'profile', lambda _: ({}, folder, photo))
+    monkeypatch.setattr(service, 'profile', lambda _, variant_id=None: ({}, folder, photo, {}))
     monkeypatch.setattr(service, 'engine', SimpleNamespace(prepare=prepare))
     with TestClient(service.app) as client:
         response = client.post('/prepare', json={'avatar_id': 'person'})

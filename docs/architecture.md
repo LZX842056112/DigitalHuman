@@ -55,6 +55,7 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
 | `backend/transport/video_quality.py` | 本地 VP8 编码参数与发送节拍 | 不改动已安装的 aiortc |
 | `backend/voice/*` | 语音合成引擎、HTTP 服务、客户端 | 不关心句子从哪来 |
 | `backend/portrait/*` | 照片准备、动作扩散、画面合成、分块流 | 不关心音频怎么合成 |
+| `backend/outfit.py` | 换装：服装分割、Lab 换色、本地修补（独立子进程，用完即退） | 只在准备阶段改源照片，不碰实时链路 |
 | `backend/dialogue/client.py` | 对话 SSE、JSON 增量解析、ASR | 不做情感到模型的映射 |
 | `backend/gpu.py` | 跨进程 GPU 租约、显存准入、取消标记 | 不管理模型权重 |
 | `backend/stream_jobs.py` | 临时目录、音频 spool、NDJSON 校验 | 不做业务判断 |
@@ -70,12 +71,21 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mode": "photo",
   "id": "a65c8bdc...",
   "name": "小夏",
   "status": "ready",              // imported | preparing | voice_pending | ready | failed
-  "photo": "source/photo/<uuid>/me.jpg",
+  "settings": { "tone": "natural", "expression": "natural" },
+  "variants": [{
+    "id": "v3f2a1c8d0b4", "label": "日常",
+    "photo": "source/photo/<uuid>/me.jpg",
+    "added_at": "...",
+    "portrait": { "folder": "portrait/<24hex>", "width": 768, "height": 1024, "fps": 25 },
+    "validation": { "photo": true }
+  }],
+  "active_variant": "v3f2a1c8d0b4",
+  "photo": "source/photo/<uuid>/me.jpg",            // 镜像：active variant
   "voice_video": "source/voice_video/<uuid>/ref.mp4",
   "sources": { "<相对路径>": "<sha256>" },
   "voice": {
@@ -92,7 +102,7 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
     "text_language": "zh",
     "text_model": "faster-whisper-small"
   },
-  "validation": { "photo": true, "voice": true },
+  "validation": { "photo": true, "voice": true },   // photo 指 active variant
   "portrait": { "folder": "portrait/<24hex>", "width": 768, "height": 1024, "fps": 25 },
   "artifact_hashes": { "<相对路径>": "<sha256>" },
   "last_job_id": "..."
@@ -102,7 +112,9 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
 设计要点：
 
 - **哈希链**：素材 → 参考音频 → 照片缓存 → 资产清单，逐级用 SHA-256 绑定。任何一环变了，`require_photo_ready()` 都会拒绝建会话。
-- **schema 迁移**：旧格式（`body_photos`）在第一次写入前备份为 `avatar.legacy.json`，再迁移成 v2。
+- **单一真相源是 `variants`**：顶层 `photo` / `portrait` / `validation.photo` 只是 active variant 的镜像，唯一写入入口是 `sync_active_variant()`；`require_photo_ready()` 会断言镜像与 active 一致，不一致直接拒绝（fail closed）。保留镜像让会话构造、画面 worker、前端缩略图三处零改动。
+- **`artifact_hashes` 是扁平表**，但写入必须合并而非覆盖，并在换图/删除造型时按"所有造型的 `portrait/*` + 两个声音文件"裁剪。`portrait/<key>` 由照片哈希派生，两套造型不会撞键。
+- **schema 迁移**：v2 在第一次写入前备份为 `avatar.v2.json`；更旧的 `body_photos` 先迁移成 v2 再迁移成 v3，备份名为 `avatar.legacy.json`。迁移函数保持纯函数，GET 不落盘。
 - **状态即门禁**：`status` 不只是展示，`/sessions` 与 `/tts` 都直接读它。
 
 ### 4.2 照片缓存 `portrait/<key>/`
@@ -115,6 +127,10 @@ idle.mkv      4 秒待机循环（100 帧）
 ```
 
 `key = sha256({photo, model_revision, code_commit, max_size})[:24]`。缓存只用 `np.savez_compressed` 存数组，加载时 `allow_pickle=False`，杜绝把缓存当代码执行。
+
+一套造型对应一张照片，所以一个 `portrait/<key>` 只服务一套造型；同一张照片被两套造型引用时共用同一目录。`settings`（语气/表情）不进缓存键——它们只改渲染条件，不改人脸特征，切换不需要重建。
+
+缓存不做自动回收：换照片或删造型后旧目录会留下，`POST /api/avatars/{id}/portrait/gc` 按"是否仍被某套造型引用"和 `source.json.metadata.photo_sha256` 的引用关系显式清理，且只删除 `portrait/` 下、`resolve()` 仍在人物目录内的普通目录。
 
 ### 4.3 会话 `data/sessions/<sid>/`
 
@@ -178,7 +194,8 @@ POST /sessions/{id}/offer
 ### 5.3 一轮文本回答
 
 ```
-message(chat_text)
+message(chat_text)  |  message(settings{tone, expression})
+  ├─ settings: 校验后写回 avatar.json，下一句生效（不打断当前回答）
   ├─ interrupt(): generation+1，清队列，取消旧任务
   ├─ begin_timing()
   └─ _start(respond(text, generation))
@@ -483,7 +500,7 @@ DecodeF3D        → 解码成人脸 RGB
 
 ## 18. 测试策略
 
-268 个测试函数（约 327 项用例，含参数化），分四层：
+304 个测试函数（约 374 项用例，含参数化），分四层：
 
 1. **纯函数**：切句、情感映射、响度归一、分块校验。
 2. **契约测试**：客户端与 worker 的事件顺序、错误码、缓存身份。

@@ -4,8 +4,12 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
+import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from backend import clock
@@ -19,14 +23,32 @@ from pydantic import BaseModel
 from backend.config import load_config, project_root
 from backend.errors import NotReady
 from backend.gpu import GpuLease
-from backend.photo_profiles import (migrate_profile, persist_photo_profile, portrait_artifacts,
-    replace_source, required_photo_artifacts, require_photo_ready, source_path,
-    validate_photo_sources, verify_artifact_hashes)
+from backend.photo_profiles import (add_variant, delete_variant, migrate_profile,
+    persist_photo_profile, portrait_artifacts, portrait_gc, pruned_hashes, replace_source,
+    replace_variant, required_photo_artifacts, require_photo_ready, resolve_variant,
+    set_active_variant, source_path, status_for, sync_active_variant, validate_photo_sources,
+    verify_artifact_hashes)
 from backend.storage import Store, sha256, read_json
+from backend import outfit, style
 
 
 class VoiceUpdate(BaseModel):
     confirmed: bool
+
+
+class SettingsUpdate(BaseModel):
+    tone: str | None = None
+    expression: str | None = None
+
+
+class OutfitRequest(BaseModel):
+    variant_id: str | None = None
+    mode: str = 'recolor'
+    color: str | None = None
+    style: str | None = None
+    prompt: str | None = None
+    strength: float = 1.
+    label: str | None = None
 
 
 class SessionRequest(BaseModel):
@@ -46,22 +68,32 @@ async def _prepare(store, avatar_id, job_id, config):
     store.update_job(job_id,status='running',stage='audio',progress=.1)
     validate_photo_sources(folder,person)
     person=prepare_voice(store,avatar_id)
-    store.update_job(job_id,stage='photo',progress=.35)
-    reuse=False
-    if person.get('validation',{}).get('photo'):
+
+    def reusable(variant):
+        if not variant.get('portrait'):return False
         try:
-            verify_artifact_hashes(folder,person,portrait_artifacts(folder,person,root=store.root))
-            ready=read_json(source_path(folder,person['portrait']['folder'])/'ready.json')
-            reuse=ready.get('video_format')=='h264_rgb_lossless_v1'
+            verify_artifact_hashes(folder,person,
+                portrait_artifacts(folder,person,root=store.root,variant=variant))
+            ready=read_json(source_path(folder,variant['portrait']['folder'])/'ready.json')
+            return ready.get('video_format')=='h264_rgb_lossless_v1'
         except (OSError,ValueError,KeyError,TypeError):
-            pass
-    if not reuse:
-        person['validation']['photo']=False
-        person['portrait']=await PortraitClient(config.get('portrait',{}).get(
-            'base_url','http://127.0.0.1:9881')).prepare(avatar_id)
-    photo_assets=portrait_artifacts(folder,person,root=store.root)
-    person['validation']['photo']=True
-    person['artifact_hashes']={name:sha256(source_path(folder,name)) for name in photo_assets}
+            return False
+
+    client=PortraitClient(config.get('portrait',{}).get('base_url','http://127.0.0.1:9881'))
+    pending=[variant for variant in person['variants'] if not reusable(variant)]
+    total=max(1,len(pending))
+    for index,variant in enumerate(pending):
+        store.update_job(job_id,stage='photo',message=f'准备造型 {index+1}/{total}',
+            progress=.35+.25*index/total)
+        variant['portrait']=await client.prepare(avatar_id,variant['id'])
+        variant['validation']={'photo':True}
+        sync_active_variant(person)
+        person['artifact_hashes']={**person.get('artifact_hashes',{}),
+            **{name:sha256(source_path(folder,name)) for name in
+               portrait_artifacts(folder,person,root=store.root,variant=variant)}}
+        store.write_manifest(avatar_id,person)
+    sync_active_variant(person)
+    store.update_job(job_id,stage='voice',progress=.6)
     store.write_manifest(avatar_id,person)
     if not person['voice'].get('confirmed'):
         person['status']='voice_pending'
@@ -78,9 +110,11 @@ async def _prepare(store, avatar_id, job_id, config):
         raise ValueError('声音服务未返回可播放的PCM音频')
     write_wav(folder/'voice/sample.wav',pcm,rate)
     person['validation']['voice']=True
-    person['artifact_hashes']={name:sha256(source_path(folder,name))
-        for name in required_photo_artifacts(folder,person,root=store.root)}
-    person['status']='ready'
+    required=required_photo_artifacts(folder,person,root=store.root)
+    person['artifact_hashes']={**person.get('artifact_hashes',{}),
+        **{name:sha256(source_path(folder,name)) for name in required}}
+    person['artifact_hashes']=pruned_hashes(person)
+    person['status']=status_for(person)
     store.write_manifest(avatar_id,person)
     require_photo_ready(store,avatar_id)
     store.update_job(job_id,status='complete',stage='complete',progress=1)
@@ -91,10 +125,10 @@ def create_app(root=None):
     store=Store(root);config=load_config(root) or {}
     pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='photo-prepare')
     operation_lock=threading.RLock()
-    sessions={};building=set();loading=set();deleting=set()
+    sessions={};building=set();loading=set();deleting=set();outfitting=set()
 
     def busy():
-        if building or sessions or loading or deleting:
+        if building or sessions or loading or deleting or outfitting:
             raise HTTPException(409,'请先停止准备任务或交互会话')
 
     async def close_session(key,session):
@@ -116,7 +150,7 @@ def create_app(root=None):
                 store.update_job(job_path.stem,status='failed',
                     error='服务已停止，准备任务已中断。请重新准备人物。')
         for person in store.list_avatars():
-            if (person.get('schema_version')==2 and person.get('mode')=='photo'
+            if (person.get('schema_version') in {2,3} and person.get('mode')=='photo'
                     and person.get('status')=='preparing'):
                 person['status']='failed'
                 store.write_manifest(person['id'],person)
@@ -149,7 +183,7 @@ def create_app(root=None):
         try:return migrate_profile(store.manifest(avatar_id))
         except (OSError,ValueError,KeyError,IndexError):raise HTTPException(404,'人物不存在或资料无效')
 
-    async def upload_file(upload,temporary,role):
+    async def upload_file(upload,temporary,role,limit=1024**3):
         filename=upload.filename or ''
         if not filename or '/' in filename or '\\' in filename or ':' in filename or filename.startswith('.'):
             raise HTTPException(400,'素材文件名无效')
@@ -160,7 +194,7 @@ def create_app(root=None):
         with path.open('wb') as stream:
             while block:=await upload.read(1024*1024):
                 size+=len(block)
-                if size>1024**3:raise HTTPException(413,'单个素材不能超过1GB')
+                if size>limit:raise HTTPException(413,f'单个素材不能超过{limit//1024**2}MB')
                 stream.write(block)
         if size==0:raise HTTPException(400,'素材文件为空')
         return path
@@ -224,6 +258,188 @@ def create_app(root=None):
             if person['status']=='ready':person['status']='voice_pending'
             store.write_manifest(avatar_id,person)
             return person['voice']
+
+    def variant_limit():
+        return int((config.get('runtime') or {}).get('max_photo_variants') or 8)
+
+    async def photo_upload(upload):
+        temporary=root/'work/uploads'/uuid.uuid4().hex
+        try:return await upload_file(upload,temporary,'photo',limit=20*1024**2),temporary
+        except BaseException:
+            shutil.rmtree(temporary,ignore_errors=True);raise
+
+    @app.post('/api/avatars/{avatar_id}/variants',status_code=201)
+    async def create_variant(avatar_id:str,photo:UploadFile=File(...),label:str=Form('')):
+        with operation_lock:busy();avatar(avatar_id)
+        path,temporary=await photo_upload(photo)
+        try:
+            with operation_lock:
+                busy();avatar(avatar_id)
+                person=add_variant(store,avatar_id,path,label or None,limit=variant_limit())
+            return person
+        except ValueError as error:raise HTTPException(409,str(error)) from error
+        finally:shutil.rmtree(temporary,ignore_errors=True)
+
+    def outfit_model_ready():
+        return (root/'models/outfit/inpaint/model_index.json').is_file()
+
+    def outfit_adapter_ready():
+        return (outfit_model_ready()
+                and (root/'models/outfit/ip-adapter/models'/outfit.ADAPTER_WEIGHT).is_file()
+                and (root/'models/outfit/ip-adapter/models/image_encoder/model.safetensors').is_file())
+
+    def run_outfit(photo,out,spec,timeout):
+        """One photo edit runs in its own process: torch is released on exit."""
+        env={**os.environ,'PYTHONPATH':str(root),'DIGITAL_HUMAN_ROOT':str(root),
+             'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1'}
+        command=[sys.executable,'-m','backend.outfit','--photo',str(photo),'--out',str(out),
+                 '--spec',json.dumps(spec,ensure_ascii=False)]
+        result=subprocess.run(command,cwd=str(root),env=env,capture_output=True,text=True,
+                              timeout=timeout)
+        lines=[line for line in (result.stdout or '').strip().splitlines() if line.strip()]
+        if not lines:
+            raise HTTPException(500,f'换装进程没有输出：{(result.stderr or "")[-200:]}')
+        try:report=json.loads(lines[-1])
+        except json.JSONDecodeError:
+            raise HTTPException(500,'换装进程返回了无法解析的结果') from None
+        if report.get('error'):raise HTTPException(400,report['error'])
+        return report
+
+    @app.get('/api/outfit/options')
+    def outfit_options():
+        return {'colors':[{'name':name,'value':code,'label':outfit.COLOR_LABELS[name]}
+                          for name,code in outfit.COLORS.items()],
+                'styles':[{'name':name,'label':outfit.STYLE_LABELS[name]}
+                          for name in outfit.STYLES],
+                'generate':outfit_model_ready(),
+                'wear':outfit_adapter_ready()}
+
+    def outfit_subject(avatar_id, variant_id):
+        """Validate the avatar, pick the variant and return its source photo."""
+        with operation_lock:
+            busy();avatar(avatar_id)
+            person=persist_photo_profile(store,avatar_id)
+            try:variant=resolve_variant(person,variant_id or None)
+            except (KeyError,ValueError) as error:
+                raise HTTPException(400,'找不到这套造型') from error
+            folder=store.avatar_dir(avatar_id)
+            photo=source_path(folder,variant['photo'])
+            if not photo.is_file() or sha256(photo)!=person['sources'].get(variant['photo']):
+                raise HTTPException(400,'照片来源校验失败')
+            outfitting.add(avatar_id)
+        return person,photo
+
+    def outfit_finish(avatar_id, produced, label):
+        with operation_lock:
+            outfitting.discard(avatar_id)
+            busy()
+            return add_variant(store,avatar_id,produced,label or '换装',limit=variant_limit())
+
+    @app.post('/api/avatars/{avatar_id}/outfit/wear',status_code=201)
+    async def wear_outfit(avatar_id:str,garment:UploadFile=File(...),label:str=Form(''),
+                          prompt:str=Form(''),variant_id:str=Form(''),scale:float=Form(.9)):
+        if not outfit_adapter_ready():
+            raise HTTPException(503,'衣服参考模型尚未安装，请先换色或选款式')
+        description=prompt.strip()[:80]
+        person,photo=outfit_subject(avatar_id,variant_id)
+        temporary=root/'work/uploads'/uuid.uuid4().hex
+        try:
+            path=await upload_file(garment,temporary,'photo',limit=20*1024**2)
+            head=description.replace('，',',').split(',')[0][:8]
+            spec={'mode':'wear','garment':str(path),
+                  'describe':description or None,
+                  'label':(label or (('换装·'+head) if head else '')).strip() or None,
+                  'scale':max(.3,min(1.2,float(scale)))}
+            report=run_outfit(photo,temporary/'out.png',spec,timeout=900)
+            return outfit_finish(avatar_id,temporary/'out.png',report.get('label'))
+        except ValueError as error:
+            raise HTTPException(409,str(error)) from error
+        except subprocess.TimeoutExpired as error:
+            raise HTTPException(504,'换装超时，请换一张更小的衣服图片') from error
+        finally:
+            with operation_lock:outfitting.discard(avatar_id)
+            shutil.rmtree(temporary,ignore_errors=True)
+
+    @app.post('/api/avatars/{avatar_id}/outfit',status_code=201)
+    def edit_outfit(avatar_id:str,body:OutfitRequest):
+        if body.mode not in ('recolor','generate'):
+            raise HTTPException(400,'未知的换装方式')
+        if body.mode=='generate' and not outfit_model_ready():
+            raise HTTPException(503,'换装模型尚未安装，当前只能换色')
+        with operation_lock:
+            busy();avatar(avatar_id)
+            person=persist_photo_profile(store,avatar_id)
+            try:variant=resolve_variant(person,body.variant_id)
+            except (KeyError,ValueError) as error:
+                raise HTTPException(400,'找不到这套造型') from error
+            folder=store.avatar_dir(avatar_id)
+            photo=source_path(folder,variant['photo'])
+            if not photo.is_file() or sha256(photo)!=person['sources'].get(variant['photo']):
+                raise HTTPException(400,'照片来源校验失败')
+            outfitting.add(avatar_id)
+        temporary=root/'work/outfit'/uuid.uuid4().hex
+        try:
+            temporary.mkdir(parents=True,exist_ok=True)
+            spec={'mode':body.mode,'color':body.color,'style':body.style,'prompt':body.prompt,
+                  'strength':body.strength,'label':body.label}
+            report=run_outfit(photo,temporary/'out.png',spec,
+                              timeout=900 if body.mode=='generate' else 180)
+            with operation_lock:
+                outfitting.discard(avatar_id)
+                busy()
+                person=add_variant(store,avatar_id,temporary/'out.png',
+                    report.get('label') or '换装',limit=variant_limit())
+            return person
+        except ValueError as error:
+            raise HTTPException(409,str(error)) from error
+        except subprocess.TimeoutExpired as error:
+            raise HTTPException(504,'换装超时，请改用换色或减少采样步数') from error
+        finally:
+            with operation_lock:outfitting.discard(avatar_id)
+            shutil.rmtree(temporary,ignore_errors=True)
+
+    @app.put('/api/avatars/{avatar_id}/variants/{variant_id}')
+    async def update_variant(avatar_id:str,variant_id:str,photo:UploadFile=File(...)):
+        with operation_lock:busy();avatar(avatar_id)
+        path,temporary=await photo_upload(photo)
+        try:
+            with operation_lock:
+                busy();avatar(avatar_id)
+                person=replace_variant(store,avatar_id,variant_id,path)
+            return person
+        except ValueError as error:raise HTTPException(400,str(error)) from error
+        finally:shutil.rmtree(temporary,ignore_errors=True)
+
+    @app.delete('/api/avatars/{avatar_id}/variants/{variant_id}')
+    def remove_variant(avatar_id:str,variant_id:str):
+        with operation_lock:
+            busy();avatar(avatar_id)
+            try:person=delete_variant(store,avatar_id,variant_id)
+            except ValueError as error:raise HTTPException(409,str(error)) from error
+        return person
+
+    @app.put('/api/avatars/{avatar_id}/variants/{variant_id}/active')
+    def activate_variant(avatar_id:str,variant_id:str):
+        with operation_lock:
+            busy();avatar(avatar_id)
+            try:person=set_active_variant(store,avatar_id,variant_id)
+            except ValueError as error:raise HTTPException(409,str(error)) from error
+        return person
+
+    @app.put('/api/avatars/{avatar_id}/settings')
+    def update_settings(avatar_id:str,update:SettingsUpdate):
+        with operation_lock:
+            busy();avatar(avatar_id)
+            person=persist_photo_profile(store,avatar_id)
+            try:person['settings']=style.merge_settings(person,update.model_dump(exclude_none=True))
+            except ValueError as error:raise HTTPException(400,str(error)) from error
+            store.write_manifest(avatar_id,person)
+            return {'settings':person['settings']}
+
+    @app.post('/api/avatars/{avatar_id}/portrait/gc')
+    def collect_portraits(avatar_id:str):
+        with operation_lock:busy();avatar(avatar_id)
+        return portrait_gc(store,avatar_id)
 
     @app.delete('/api/avatars/{avatar_id}')
     def delete_avatar(avatar_id:str):

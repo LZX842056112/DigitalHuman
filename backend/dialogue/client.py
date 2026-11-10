@@ -7,13 +7,24 @@ import threading
 import httpx
 
 from backend.emotion import Reply, normalize_emotion
+from backend.style import tone_clause
 
 MAX_TEXT = 300
-SYSTEM_PROMPT = ('你是本机照片数字人助手。用自然中文回答，每次最多两句。'
-                 '不要虚构照片人物的经历、身份或记忆。只返回JSON对象：'
-                 '{"emotion":"neutral","text":"回答文字"}，先写 emotion 再写 text。'
-                 'emotion只能是neutral、happy、sad、angry。按回答语气选择情感，'
-                 '优先自然克制，不要照搬用户的情绪。')
+_HEAD = '你是本机照片数字人助手。用自然中文回答，每次最多两句。'
+_TAIL = ('不要虚构照片人物的经历、身份或记忆。只返回JSON对象：'
+         '{"emotion":"neutral","text":"回答文字"}，先写 emotion 再写 text。'
+         'emotion只能是neutral、happy、sad、angry。按回答语气选择情感，'
+         '优先自然克制，不要照搬用户的情绪。')
+# natural returns this exact string, so the default prompt never changes.
+SYSTEM_PROMPT = _HEAD + _TAIL
+
+
+def system_prompt(tone='natural'):
+    """Insert one tone clause; the hard rules stay at the end of the prompt."""
+    clause = tone_clause(tone)
+    return _HEAD + clause + _TAIL if clause else SYSTEM_PROMPT
+
+
 REPLY_SCHEMA = {'type': 'object', 'properties': {
         'emotion': {'type': 'string', 'enum': ['neutral', 'happy', 'sad', 'angry']},
         'text': {'type': 'string', 'minLength': 1, 'maxLength': MAX_TEXT}},
@@ -169,20 +180,20 @@ class Dialogue:
         segments, _ = self._recognizer.transcribe(audio, language="zh", vad_filter=True, beam_size=3)
         return "".join(segment.text for segment in segments).strip()
 
-    def _payload(self, text, history):
+    def _payload(self, text, history, tone='natural'):
         cfg = self.config.get("dialogue", {})
-        messages = [{"role": "system", "content": SYSTEM_PROMPT},
+        messages = [{"role": "system", "content": system_prompt(tone)},
                     *history[-cfg.get("context_turns", 6) * 2:], {"role": "user", "content": text}]
         return cfg, {"model": cfg.get("model", "qwen2.5-3b-instruct"), "messages": messages,
                      "max_tokens": cfg.get("max_tokens", 128), "temperature": .6, "stream": True,
                      "response_format": {"type": "json_object", "schema": REPLY_SCHEMA}}
 
-    async def stream(self, text, history):
+    async def stream(self, text, history, tone='natural'):
         """Yield emotion/text events and a final Reply without waiting for the whole answer.
 
         Servers that ignore ``stream`` and return one JSON body are accepted too.
         """
-        cfg, payload = self._payload(text, history)
+        cfg, payload = self._payload(text, history, tone)
         url = cfg.get("base_url", "http://127.0.0.1:8081/v1") + "/chat/completions"
         client = await asyncio.to_thread(httpx.AsyncClient, timeout=120, trust_env=False)
         reader = ReplyStream()
@@ -229,9 +240,9 @@ class Dialogue:
                     raise RuntimeError('对话流在完成前断开')
                 yield {'type': 'done', 'reply': reader.reply()}
 
-    async def answer(self, text, history):
+    async def answer(self, text, history, tone='natural'):
         reply = None
-        async for event in self.stream(text, history):
+        async for event in self.stream(text, history, tone):
             if event['type'] == 'done':
                 reply = event['reply']
         if reply is None:

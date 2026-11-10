@@ -56,7 +56,7 @@ async def test_sentences_are_spoken_while_the_model_is_still_writing(tmp_path):
     calls = clients(instance)
     release = asyncio.Event()
 
-    async def stream(text, history):
+    async def stream(text, history, tone='natural'):
         yield {'type': 'emotion', 'emotion': 'happy'}
         yield {'type': 'text', 'delta': '第一句。'}
         yield {'type': 'text', 'delta': '第二'}
@@ -88,7 +88,7 @@ async def test_interrupted_reply_never_publishes_a_partial_transcript(tmp_path):
     clients(instance)
     release = asyncio.Event()
 
-    async def stream(text, history):
+    async def stream(text, history, tone='natural'):
         yield {'type': 'emotion', 'emotion': 'neutral'}
         yield {'type': 'text', 'delta': '第一句。'}
         yield {'type': 'text', 'delta': '第二'}

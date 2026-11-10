@@ -98,6 +98,9 @@ studio :7860   backend.api.app
 | `runtime.first_clause_chars` | `14` | 首段在逗号处提前切出的字数上限，`0` 关闭 |
 | `runtime.voice_reference_seconds` | `8` | 参考声音取样长度（秒），越长越像但合成略慢 |
 | `runtime.voice_clone_mode` | `hybrid` | `hybrid` 平语零样本、有情绪走指令；`zero_shot` 全程零样本；`instruct` 全程指令 |
+| `runtime.tone_voice` | `true` | 非"自然"语气是否也让声音生效；关掉则语气只改文案 |
+| `runtime.max_photo_variants` | `8` | 每个数字人最多几套造型（不同穿搭/场景照片） |
+| `runtime.portrait_seed` | `null` | 仅诊断用：固定动作扩散噪声，便于同机 A/B |
 | `runtime.idle_timeout_seconds` | `900` | 会话空闲回收 |
 | `runtime.disk_reserve_gib` | `10` | 流式生成要求保留的磁盘空间 |
 
@@ -109,6 +112,30 @@ studio :7860   backend.api.app
 2. **选克隆方式**：`voice_clone_mode` 默认 `hybrid`——平语走零样本，需要参考音频的转写；准备人物时本地 faster-whisper 自动生成并写进 `voice.text`，没有转写就退回指令模式。这个值在声音服务启动时读取，改完要重启 voice（`.\scripts\restart-and-warm.ps1` 会一起重启）。
 3. **量化验证**：`.\scripts\voice-similarity.ps1 -AvatarId <id> -Diagnose`。默认比对人物目录里的 `voice/sample.wav`；加 `-Text "..."` 会先让声音服务合成再比对。它用模型自己的 campplus 编码给出参考音频与合成音频的余弦相似度。
 
+## 个性化：语气、表情与造型
+
+三个维度互相独立，都是"每个人物一份"的设置，存在 `avatar.json`：
+
+| 设置 | 取值 | 默认 | 对最终呈现的影响 |
+|---|---|---|---|
+| 语气 | 自然 / 亲切 / 专业 / 活泼 | 自然 | 只改"怎么说"：措辞（句长、称呼、语气词、感叹号）以及平语句的发音指令；不改长相、嘴型、帧率 |
+| 表情 | 自然 / 微笑 / 严肃 / 惊讶 | 自然 | 只在平语回答时改脸：Ditto 情绪软标签 + 表情动态幅度；有情绪的回答按情绪演 |
+| 造型 | 1–8 套 | 1 套 | 每套一份画面缓存。可以上传另一张照片，也可以直接对当前照片换装（换色 / 换款式） |
+
+保存与生效：`PUT /api/avatars/{id}/settings`（或会话内的 `{"type":"settings"}` 消息）写回清单，下一句生效；切换造型必须断开连接，因为会话建立时已固定画面尺寸与待机视频，界面会提示"下次连接生效"。
+
+为什么换装必须改照片：渲染只重绘 512×512 的头部裁剪区，再经软边掩膜贴回原图；衣领以下、背景和光线都是源照片的像素，模型不会重绘。所以换装不是渲染参数，而是先把源照片里的衣服换掉，生成一张同人新图，再交给准备流程。
+
+界面只做一件事：**上传一张服装图片，按图给照片里的人物换装**（左侧「服装」→ 上传图片 → 可填一句描述 → 开始换装）。先填描述、再选图片、最后点开始换装；描述是选填的，但填了更准。
+
+原理：先用本地 Segformer（`models/outfit/clothes-seg`）分出发型/上装得到软边掩膜，再用 SD1.5 inpainting（`models/outfit/inpaint`）重绘；服装图片由 IP-Adapter（`models/outfit/ip-adapter`）注入，提供颜色、材质和大致力。中文描述先由本地对话模型翻成英文名词短语，因为 SD1.5 只认英文，且"外套 / 衬衫 / 毛衣"这类名词决定模型画出的轮廓。约 40 秒，脸和背景逐像素不变。
+
+旧的「换色」（8 个预设色）和「换款式」（6 个预设）已从界面移除，仍保留在 `POST /api/avatars/{id}/outfit` 接口里，需要时可脚本调用。
+
+两种结果都会作为一套新造型加入 `variants`，需要点"准备人物"生成缓存后才能切换。当前换款式是实验性能力：针织衫、大衣一类的纯色衣物效果稳定，衬衫的领口偶尔偏薄，源照片自带的水印若落在衣服上会被重绘成乱码（建议用无水印素材）。
+
+"自然"是最像参考的选择：语气为自然时平语句仍走零样本克隆；选其他语气且 `tone_voice: true` 时，平语句改走 instruct2，用一点音色相似度换取可听出的语气差异。表情同理——有情绪的回答完全忽略用户预设，避免"一直笑"地说严肃内容。
+
 ## 目录结构
 
 ```
@@ -116,6 +143,7 @@ backend/
   api/app.py              studio：人物、任务、会话、WebRTC 协商、静态前端
   dialogue/client.py      对话模型客户端（SSE + 增量 JSON 提取）与语音识别
   voice/                  CosyVoice 引擎、克隆路径、相似度度量、HTTP 服务、客户端
+  style.py                语气与表情预设（唯一的取值与默认值来源）
   portrait/               Ditto 引擎、分块流、照片缓存、HTTP 服务、客户端
   asr.py                  参考音频转写（本地 faster-whisper，CPU）
   transport/
@@ -130,8 +158,10 @@ backend/
   photo_profiles.py       人物资料、素材校验、资产哈希
   storage.py              原子 JSON、哈希、人物目录
 frontend/src/             React 19 + Vite 前端（photo-main.tsx 是主界面）
-scripts/                  安装、启动、自检、验收、基准、预热、声音相似度脚本
-tests/                    268 个测试函数（约 327 项用例）
+backend/outfit.py         换装：服装分割 + Lab 换色 + 本地修补模型
+models/outfit/            换装用的分割模型与修补模型（可选）
+scripts/                  安装、启动、自检、验收、基准、预热、相似度、表情标定脚本
+tests/                    304 个测试函数（约 374 项用例）
 configs/                  app.yaml、模型清单与两套 Python 依赖
 docs/                     PRD、代码设计、技术讲解
 data/                     人物资料与运行产物（不入库）
@@ -147,6 +177,13 @@ studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 | POST | `/avatars/import` | multipart：`name`、`photo`、`voice_video` |
 | PUT | `/avatars/{id}/photo`、`/voice-video` | 替换素材（会清空对应校验） |
 | PUT | `/avatars/{id}/voice` | `{"confirmed": true}`，确认参考声音 |
+| PUT | `/avatars/{id}/settings` | `{"tone": "...", "expression": "..."}`，可只传一个字段 |
+| POST | `/avatars/{id}/variants` / PUT、DELETE `/variants/{vid}` | 新增、替换、删除一套造型（照片） |
+| POST | `/avatars/{id}/outfit` | 预设换色 / 预设款式（界面已隐藏，仍可由脚本调用） |
+| POST | `/avatars/{id}/outfit/wear` | multipart：`garment`（衣服图片）+ `prompt`（中文描述）+ `scale`，按图换装 |
+| GET | `/outfit/options` | 可用的换装颜色与款式，以及本机是否装了生成模型 |
+| PUT | `/avatars/{id}/variants/{vid}/active` | 切换使用中的造型，要求该套已准备且当前无会话 |
+| POST | `/avatars/{id}/portrait/gc` | 回收没有任何造型引用的画面缓存 |
 | DELETE | `/avatars/{id}` | 删除人物（只删项目内副本） |
 | POST | `/avatars/{id}/build` | 开始准备，返回 `job_id` |
 | GET | `/jobs/{id}` | 任务进度：`stage` / `progress` / `status` |
@@ -175,6 +212,8 @@ studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 | `scripts/benchmark_latency.py` | 测首帧/首声延迟，不代替浏览器可听性验收 |
 | `scripts/profile_streaming.py` | 双模型同卡显存探测，产出 `.runtime/stream-admission.json` 供准入使用 |
 | `scripts/render-bench.py` | 画面 A/B：改 `steps,batch,stride` 跑固定音频，比较各阶段耗时 |
+| `scripts/fetch_outfit_model.py` | 下载可选的换装模型（分割 110 MB + 修补 2.6 GB + 参考图适配器 2.5 GB） |
+| `scripts/expression_calibrate.py` | 为一个人物渲染四种表情，输出差异区域、帧数与边缘一致性报告 |
 | `scripts/restart-and-warm.ps1` | 重启并等到预热完成，适合测冷/热启动 |
 | `scripts/check_frontend.py` | 校验 `frontend/dist` 与源码摘要一致（`doctor` 也会查） |
 
@@ -206,6 +245,14 @@ studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 **声音断续/画面停顿**：`metrics.stream_underruns` 与 `paired_buffer_seconds` 能看出是配音不足还是画面不足；流式模式可先退回 `photo_streaming: false` 确认基线。
 
 **浏览器没有声音**：点一次"开启声音"；`diagnostics=1` 页面能看到音画偏差与解码帧数。
+
+**换装和换照片有什么区别**：换装改的是同一张照片里的衣服，脸和背景不动；换照片是另一张素材。两者都会成为一套新造型，都要准备后才能切用。
+
+**换款式生成的图有点假**：当前用的是 SD1.5 修补模型，纯色针织/大衣最稳，衬衫领口偶尔偏薄；提高 `steps`、换更好的修补模型（把权重放进 `models/outfit/inpaint`）都能改善。换色路径没有生成环节，结果与照片一致。
+
+**切换造型后画面没变**：造型切换要断开连接再连；若该套还没准备，接口会返回 409"请先准备该造型"。
+
+**表情看起来没区别**：预设只在平语回答生效，有情绪的回答会按情绪演；本机实测变化像素 8–18%、平均差 6–10/255；换人物后先用 `expression_calibrate.py` 复核一次。
 
 **改了前端没生效**：`cd frontend && npm run build`，再跑 `python -m scripts.check_frontend`；studio 只托管 `frontend/dist`。
 

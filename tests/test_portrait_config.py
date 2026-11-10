@@ -91,3 +91,19 @@ def test_rendered_photo_video_preserves_pixels_and_compresses_repeated_backgroun
         for frame in frames:
             np.testing.assert_array_equal(frame.to_ndarray(format='rgb24'), photo)
     assert target.stat().st_size < photo.nbytes*4, 'Repeated photo pixels must not be stored independently per frame'
+
+
+def test_expression_only_shapes_neutral_turns():
+    from backend.portrait.engine import photo_options
+    defaults = {'ch_info': None, 'max_size': 1920}
+    assert photo_options(defaults, 'neutral')['emo'] == 4
+    assert photo_options(defaults, 'neutral')['use_d_keys']['exp'] == 1.
+    assert photo_options(defaults, 'neutral', expression='smile')['emo'] == (3, 4)
+    serious = photo_options(defaults, 'neutral', expression='serious')
+    assert serious['emo'].shape == (1, 8) and serious['use_d_keys']['exp'] == .75
+    surprise = photo_options(defaults, 'neutral', expression='surprise')
+    assert surprise['emo'] == 6 and surprise['use_d_keys']['exp'] == .85
+    emotional = photo_options(defaults, 'happy', expression='serious')
+    assert emotional['emo'] == 3 and emotional['use_d_keys']['exp'] == 1.
+    assert emotional['use_d_keys']['pitch'] == .25
+    assert defaults == {'ch_info': None, 'max_size': 1920}

@@ -48,16 +48,16 @@ def clients(instance, text='你好！', emotion='happy', render=None):
     calls = []
     reply_text = text
 
-    async def answer(text, history):
+    async def answer(text, history, tone='natural'):
         return Reply(reply_text, emotion)
 
     async def voice(text, folder, profile, **kwargs):
         calls.append(('voice', kwargs))
         return np.full(2400, .2, np.float32), 24000
 
-    async def portrait(avatar_id, session_id, generation, index, emotion):
+    async def portrait(avatar_id, session_id, generation, index, emotion, expression='natural'):
         from backend.model_jobs import sentence_paths
-        calls.append(('portrait', {'emotion': emotion, 'generation': generation}))
+        calls.append(('portrait', {'emotion': emotion, 'generation': generation, 'expression': expression}))
         audio, video = sentence_paths(instance.root, session_id, generation, index)
         with wave.open(str(audio)) as wav:
             assert wav.getnframes() == 2400 and wav.getframerate() == 24000
@@ -79,7 +79,7 @@ async def test_interrupt_or_close_cancels_pending_dialogue_request(tmp_path,clos
     instance,events=session(tmp_path)
     clients(instance)
     entered=asyncio.Event();release=asyncio.Event();cancelled=asyncio.Event()
-    async def answer(text,history):
+    async def answer(text,history,tone='natural'):
         entered.set()
         try:await release.wait()
         except asyncio.CancelledError:
@@ -104,7 +104,7 @@ async def test_cancelled_old_dialogue_allows_next_question_on_same_session(tmp_p
     clients(instance,text='新回答。')
     normal=instance.dialogue.answer
     entered,cancelled=asyncio.Event(),asyncio.Event()
-    async def answer(text,history):
+    async def answer(text,history,tone='natural'):
         if text=='旧问题':
             entered.set()
             try:await asyncio.Event().wait()
@@ -197,7 +197,7 @@ async def test_late_cancelled_turn_cannot_overwrite_new_turn_timing(tmp_path,mon
     monkeypatch.setattr(photo_session,'clock',SimpleNamespace(monotonic=lambda:now[0],source_name=lambda:'test'))
     entered,release=asyncio.Event(),asyncio.Event()
     normal=instance.dialogue.answer
-    async def answer(text,history):
+    async def answer(text,history,tone='natural'):
         if text=='旧问题':
             entered.set()
             try:await release.wait()
@@ -647,4 +647,45 @@ async def test_interrupt_rejects_speaking_decode_that_finishes_late(tmp_path, mo
         assert frame.to_ndarray(format='rgb24')[0, 0, 0] == 70
     finally:
         release.set()
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_settings_message_applies_to_the_next_turn(tmp_path):
+    instance, events = session(tmp_path)
+    calls = clients(instance, emotion='happy')
+    tones = []
+    original = instance.dialogue.answer
+
+    async def answer(text, history, tone='natural'):
+        tones.append(tone)
+        return await original(text, history, tone)
+
+    instance.dialogue.answer = answer
+    try:
+        instance.message(json.dumps({'type': 'settings', 'tone': 'professional',
+                                     'expression': 'smile'}))
+        assert instance.manifest['settings'] == {'tone': 'professional', 'expression': 'smile'}
+        saved = json.loads((instance.avatar_dir/'avatar.json').read_text(encoding='utf-8'))
+        assert saved['settings']['expression'] == 'smile'
+        assert any(event.get('text') == '语气与表情已更新' for event in events)
+        instance.message(json.dumps({'type': 'chat_text', 'text': '你好'}))
+        await until(lambda: any(call[0] == 'portrait' for call in calls))
+        assert tones == ['professional']
+        assert [call[1]['expression'] for call in calls if call[0] == 'portrait'] == ['smile']
+        assert [call[1]['emotion'] for call in calls if call[0] == 'portrait'] == ['happy']
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_settings_report_an_error_and_keep_the_old_value(tmp_path):
+    instance, events = session(tmp_path)
+    clients(instance)
+    try:
+        instance.message(json.dumps({'type': 'settings', 'tone': 'angry'}))
+        await until(lambda: any(event['type'] == 'error' for event in events))
+        assert 'settings' not in instance.manifest
+        assert not (instance.avatar_dir/'avatar.json').exists()
+    finally:
         await instance.close()

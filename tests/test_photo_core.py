@@ -22,7 +22,7 @@ def test_import_photo_profile_and_replacements_keep_sources_independent(tmp_path
     video=tmp_path/'voice.mp4';video.write_bytes(b'video1')
     store=Store(tmp_path/'project')
     person=store.import_photo('photo person',photo,video)
-    assert person['schema_version'] == 2 and person['mode'] == 'photo'
+    assert person['schema_version'] == 3 and person['mode'] == 'photo'
     assert 'body_photos' not in person and 'head_choice' not in person
     folder=store.avatar_dir(person['id'])
     voice=person['voice_video'];voice_hash=person['sources'][voice]

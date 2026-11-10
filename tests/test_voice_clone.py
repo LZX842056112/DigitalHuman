@@ -75,3 +75,25 @@ def test_health_reports_the_configured_mode():
     from fastapi.testclient import TestClient
     from backend.voice import service
     assert TestClient(service.app).get('/health').json()['clone_mode']==service.CLONE_MODE
+
+
+@pytest.mark.parametrize('tone,mode,tone_voice,expected', [
+    ('natural', 'hybrid', True, ('zero_shot', '你好。')),
+    ('warm', 'hybrid', True, ('instruct', '')),
+    ('warm', 'hybrid', False, ('zero_shot', '你好。')),
+    ('warm', 'zero_shot', True, ('zero_shot', '你好。')),
+    ('warm', 'instruct', True, ('instruct', '')),
+])
+def test_tone_decides_the_neutral_path(monkeypatch, tone, mode, tone_voice, expected):
+    from backend.voice import service
+    monkeypatch.setattr(service, 'CLONE_MODE', mode)
+    monkeypatch.setattr(service, 'TONE_VOICE', tone_voice)
+    assert service.clone_settings('neutral', '你好。', tone) == expected
+
+
+def test_tone_only_changes_the_neutral_cache_key():
+    from backend.voice.engine import voice_cache_key
+    assert voice_cache_key('voice', 'happy', 'model', tone='warm') == \
+        voice_cache_key('voice', 'happy', 'model')
+    assert voice_cache_key('voice', 'neutral', 'model', tone='warm') != \
+        voice_cache_key('voice', 'neutral', 'model')

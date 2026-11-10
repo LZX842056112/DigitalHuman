@@ -2,6 +2,7 @@ import asyncio
 import httpx
 from contextlib import aclosing
 from backend.emotion import normalize_emotion
+from backend.style import normalize_expression
 
 
 class PortraitClient:
@@ -15,17 +16,21 @@ class PortraitClient:
             if response.is_error:raise RuntimeError('照片服务：'+response.text[:500])
             return response.json()
 
-    async def prepare(self,avatar_id):
-        return await self._post('/prepare',{'avatar_id':avatar_id})
+    async def prepare(self,avatar_id,variant_id=None):
+        body={'avatar_id':avatar_id}
+        if variant_id:body['variant_id']=variant_id
+        return await self._post('/prepare',body)
 
-    async def animate(self,avatar_id,session_id,generation,index,emotion):
+    async def animate(self,avatar_id,session_id,generation,index,emotion,expression='natural'):
         return await self._post('/render',{'avatar_id':avatar_id,'session_id':session_id,
-            'generation':generation,'index':index,'emotion':normalize_emotion(emotion)})
+            'generation':generation,'index':index,'emotion':normalize_emotion(emotion),
+            'expression':normalize_expression(expression)})
 
-    async def stream(self,avatar_id,session_id,generation,index,emotion,*,root,token):
+    async def stream(self,avatar_id,session_id,generation,index,emotion,expression='natural',*,root,token):
         from backend.stream_jobs import iter_worker_events,stream_folder,video_chunk_path
         request=dict(avatar_id=avatar_id,session_id=session_id,generation=generation,index=index,
-                     emotion=normalize_emotion(emotion),token=token)
+                     emotion=normalize_emotion(emotion),expression=normalize_expression(expression),
+                     token=token)
         chunks=frames=0
         folder=await asyncio.to_thread(stream_folder,root,session_id,generation,index)
         async with aclosing(iter_worker_events(self.base_url,'/render/stream',request,

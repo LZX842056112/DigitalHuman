@@ -10,6 +10,7 @@ from backend.media import write_wav_stream
 from backend.config import load_config, project_root
 from backend.emotion import normalize_emotion
 from backend.errors import NotReady
+from backend.style import normalize_tone,settings_of
 from backend.model_jobs import expired
 from backend.storage import Store,sha256
 from backend.photo_profiles import migrate_profile,source_path
@@ -22,14 +23,24 @@ ROOT=project_root();store=Store(ROOT);engine=VoiceEngine(ROOT);lock=threading.Lo
 # hybrid keeps the reference melody on neutral turns and only falls back to an
 # instruction when the answer asks for a different emotion.
 CLONE_MODE=str(((load_config(ROOT) or {}).get('runtime') or {}).get('voice_clone_mode','hybrid') or 'hybrid')
+# On by default: choosing a non-natural tone is an explicit request for spoken
+# delivery, so neutral turns trade a little zero-shot similarity for it.
+TONE_VOICE=bool(((load_config(ROOT) or {}).get('runtime') or {}).get('tone_voice',True))
 
 
-def clone_settings(emotion,text):
-    """Pick the cloning path: zero_shot needs a real transcript."""
+def clone_settings(emotion,text,tone='natural',mode=None):
+    """Pick the cloning path: zero_shot needs a real transcript.
+
+    zero-shot ignores the instruction, so a non-neutral tone has to move
+    neutral turns to instruct2 for the tone to be audible at all.
+    """
     prompt=(text or '').strip()
-    if not prompt or CLONE_MODE=='instruct':return 'instruct',''
-    if CLONE_MODE=='zero_shot':return 'zero_shot',prompt
-    return ('zero_shot',prompt) if normalize_emotion(emotion)=='neutral' else ('instruct','')
+    mode=mode or CLONE_MODE
+    if not prompt or mode=='instruct':return 'instruct',''
+    if mode=='zero_shot':return 'zero_shot',prompt
+    if normalize_emotion(emotion)!='neutral':return 'instruct',''
+    if TONE_VOICE and normalize_tone(tone)!='natural':return 'instruct',''
+    return 'zero_shot',prompt
 
 
 @asynccontextmanager
@@ -63,7 +74,8 @@ async def not_ready(request,error):
 
 
 @app.get('/health')
-def health():return {'status':'ok','loaded':engine.voice is not None,'engine':'CosyVoice3','clone_mode':CLONE_MODE}
+def health():return {'status':'ok','loaded':engine.voice is not None,'engine':'CosyVoice3',
+        'clone_mode':CLONE_MODE,'tone_voice':TONE_VOICE}
 
 
 @app.post('/tts/stream')
@@ -74,7 +86,8 @@ def tts_stream(body:VoiceStreamRequest):
     reference=source_path(avatar,manifest['voice']['reference'])
     if sha256(reference)!=manifest['voice']['reference_sha256']:raise HTTPException(400,'参考声音校验失败')
     folder=stream_folder(ROOT,body.session_id,body.generation,body.index)
-    mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'))
+    settings=settings_of(manifest)
+    mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'])
     def produce(disconnected):
         cancelled=StreamCancellation(ROOT,body.session_id,body.generation,body.token,disconnected)
         spool=None;native=None
@@ -83,7 +96,8 @@ def tts_stream(body:VoiceStreamRequest):
                 if cancelled():raise InterruptedError('当前回答已停止')
                 check_space(ROOT,folder)
                 native=iter(engine.stream_synthesize(body.text,reference,body.emotion,avatar/'voice',cancelled,
-                    session_id=body.session_id,token=body.token,prompt_text=prompt,mode=mode))
+                    session_id=body.session_id,token=body.token,prompt_text=prompt,mode=mode,
+                    tone=settings['tone']))
                 first=next(native)
                 spool=AudioSpool(folder,engine.voice.sample_rate)
                 yield dict(type='start',rate=engine.voice.sample_rate)
@@ -115,9 +129,10 @@ def tts(body:VoiceRequest):
             if not manifest['voice'].get('confirmed'):raise NotReady('请先试听并确认参考声音')
             reference=source_path(folder,manifest['voice']['reference'])
             if sha256(reference)!=manifest['voice']['reference_sha256']:raise ValueError('参考声音校验失败')
-            mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'))
+            settings=settings_of(manifest)
+            mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'])
             pcm,rate,report=engine.synthesize(body.text,reference,body.emotion,folder/'voice',cancelled,
-                prompt_text=prompt,mode=mode)
+                prompt_text=prompt,mode=mode,tone=settings['tone'])
             if cancelled():raise InterruptedError('当前回答已停止')
             output=io.BytesIO()
             write_wav_stream(output,pcm,rate)

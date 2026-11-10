@@ -36,5 +36,14 @@ def portrait_emotion(emotion):
     return EMOTIONS[normalize_emotion(emotion)]
 
 
-def voice_instruction(emotion):
-    return 'You are a helpful assistant. '+INSTRUCTIONS[normalize_emotion(emotion)]+'<|endofprompt|>'
+def voice_instruction(emotion, tone='natural'):
+    """A real emotion wins; the tone only fills the neutral instruction slot.
+
+    Keeping non-neutral strings byte-identical means existing speaker caches
+    stay valid when a user picks a tone.
+    """
+    from backend.style import voice_instruction_clause
+    emotion=normalize_emotion(emotion)
+    if emotion!='neutral':
+        return 'You are a helpful assistant. '+INSTRUCTIONS[emotion]+'<|endofprompt|>'
+    return 'You are a helpful assistant. '+voice_instruction_clause(tone)+'<|endofprompt|>'
