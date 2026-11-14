@@ -46,3 +46,45 @@ runtime:
   distro: DigitalHuman
   disk_reserve_gib: 10
   idle_timeout_seconds: 900
+
+edit:
+  # 扩图目标画幅。3:4 最稳；9:16 会把一次生成拆成两段（每段纵宽比不超过
+  # extend_max_ratio_per_pass），否则 SD1.5 容易在一张长图里画出重复人物。
+  extend_aspect: "3:4"
+  # 工作画布长边。SD1.5 原生 512，768 已接近质量上限；再大只会更慢。
+  extend_working_edge: 768
+  extend_steps: 36
+  # 扩图比换装更依赖填充色而非提示词，所以引导强度略低。
+  extend_guidance: 6.5
+  # 用同一人物上半身作 IP-Adapter 参考的强度。0.25–0.55 之间；太高会把原上装
+  # 复制到新生成的腿部，太低会丢掉肤色与影调连续性。0 表示关闭（不加载 adapter）。
+  extend_adapter_scale: 0.35
+  # 接缝羽化带宽（相对画布长边），最终会被限制在 8–24 像素。
+  extend_seam_band_ratio: 0.012
+  # 头顶预留高度（相对原图高度）。若原图已切到发顶，自动按 0 处理（不补头发）。
+  extend_headroom_ratio: 0.05
+  # 单段生成允许的最大 高/宽 比；超过则分段。
+  extend_max_ratio_per_pass: 1.55
+  # 人物底部到画布底已小于该比例时判定为“已接近全身”，不生成。
+  extend_min_gain_ratio: 0.06
+  # 单次最多向下扩展原图高度的倍数，超过就截断（避免把半身照拉成全身怪物）。
+  extend_max_gain_ratio: 2.2
+  # 新区域用下装/肤色底色打底（true），而不是镜像复制（false，仅调试用）。
+  extend_body_prior: true
+  # 输出图片的长边上限；原生画布不受此限制，只有保存的文件受限制。
+  extend_output_edge: 1536
+  preview:
+    # 每隔多少步写一张中间图；前 skip_steps 步仍是噪声，跳过不解码。
+    steps_interval: 4
+    skip_steps: 2
+    # 中间图长边；解码是固定成本，缩小只省编码与传输。
+    long_edge: 512
+    # decode：真实 VAE 解码（约 +100ms/张）；latent：潜变量投影（约 3ms，只有色块）；
+    # off：关闭。显存不足自动 offload 时会强制降为 latent。
+    mode: decode
+  prompt:
+    # 中文提示词翻译的超时与缓存条数；缓存落盘在 work/cache/prompts.json。
+    timeout_seconds: 6
+    cache_size: 500
+  # 自定义语气（自由文本）的最大字数，必须与 backend/style.py 的 MAX_TONE_PROMPT 一致。
+  max_tone_prompt: 60

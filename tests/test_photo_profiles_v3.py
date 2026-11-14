@@ -79,7 +79,8 @@ def test_import_creates_one_active_variant(tmp_path):
     video = tmp_path/'a.mp4'; video.write_bytes(b'video')
     manifest = import_photo(store, '新人物', photo, video)
     assert manifest['schema_version'] == 3
-    assert manifest['settings'] == {'tone': 'natural', 'expression': 'natural'}
+    assert manifest['settings'] == {'tone': 'natural', 'expression': 'natural',
+                                    'tone_prompt': ''}
     assert len(manifest['variants']) == 1
     assert manifest['active_variant'] == manifest['variants'][0]['id']
     assert manifest['variants'][0]['photo'] == manifest['photo']
@@ -97,7 +98,8 @@ def test_v2_migration_is_pure_and_mirrors_the_active_variant():
     assert migrated['schema_version'] == 3
     assert migrated['variants'][0]['photo'] == source['photo']
     assert migrated['portrait'] == source['portrait']
-    assert migrated['settings'] == {'tone': 'natural', 'expression': 'natural'}
+    assert migrated['settings'] == {'tone': 'natural', 'expression': 'natural',
+                                    'tone_prompt': ''}
     again = migrate_profile(migrated)
     assert again == migrated and again is not migrated
 

@@ -6,7 +6,8 @@ def test_enumerations_are_closed():
     from backend import style
     assert style.TONES == ('natural', 'warm', 'professional', 'lively')
     assert style.EXPRESSIONS == ('natural', 'smile', 'serious', 'surprise')
-    assert style.DEFAULT_SETTINGS == {'tone': 'natural', 'expression': 'natural'}
+    assert style.DEFAULT_SETTINGS == {'tone': 'natural', 'expression': 'natural',
+                                      'tone_prompt': ''}
 
 
 def test_unknown_values_fall_back_for_runtime_paths():
@@ -19,18 +20,20 @@ def test_unknown_values_fall_back_for_runtime_paths():
 
 def test_settings_read_tolerates_missing_and_broken_values():
     from backend.style import settings_of
-    assert settings_of({}) == {'tone': 'natural', 'expression': 'natural'}
-    assert settings_of({'settings': None}) == {'tone': 'natural', 'expression': 'natural'}
+    empty = {'tone': 'natural', 'expression': 'natural', 'tone_prompt': ''}
+    assert settings_of({}) == empty
+    assert settings_of({'settings': None}) == empty
     assert settings_of({'settings': {'tone': 'lively', 'expression': 'x'}}) == {
-        'tone': 'lively', 'expression': 'natural'}
+        'tone': 'lively', 'expression': 'natural', 'tone_prompt': ''}
 
 
 def test_merge_settings_updates_one_field_and_keeps_the_other():
     from backend.style import merge_settings
     current = {'settings': {'tone': 'warm', 'expression': 'smile'}}
     assert merge_settings(current, {'tone': 'professional'}) == {
-        'tone': 'professional', 'expression': 'smile'}
-    assert merge_settings(current, {}) == {'tone': 'warm', 'expression': 'smile'}
+        'tone': 'professional', 'expression': 'smile', 'tone_prompt': ''}
+    assert merge_settings(current, {}) == {
+        'tone': 'warm', 'expression': 'smile', 'tone_prompt': ''}
     assert current['settings'] == {'tone': 'warm', 'expression': 'smile'}
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import uuid
 from backend.storage import sha256, read_json
+from backend import style
 from backend.errors import NotReady
 from backend.portrait.assets import portrait_version
 
@@ -97,7 +98,7 @@ def import_photo(store, name, photo, voice_video):
              'portrait':None,'validation':{'photo':False}}
     manifest={'schema_version':3,'mode':'photo','id':avatar_id,'name':name[:80],
         'created_at':datetime.now(timezone.utc).isoformat(),'status':'imported',
-        'settings':{'tone':'natural','expression':'natural'},
+        'settings':dict(style.DEFAULT_SETTINGS),
         'variants':[variant],'active_variant':variant['id'],
         'photo':image,'voice_video':video,'sources':{image:image_hash,video:video_hash},
         'voice':{'confirmed':False,'language':'zh'},'validation':{'photo':False,'voice':False},
@@ -113,7 +114,7 @@ def _v2_to_v3(manifest):
              'portrait':deepcopy(portrait),
              'validation':{'photo':bool((manifest.get('validation') or {}).get('photo'))}}
     manifest.update(schema_version=3,
-        settings={'tone':'natural','expression':'natural',**(manifest.get('settings') or {})},
+        settings={**style.DEFAULT_SETTINGS,**(manifest.get('settings') or {})},
         variants=[variant],active_variant=variant['id'],portrait=deepcopy(portrait))
     return manifest
 

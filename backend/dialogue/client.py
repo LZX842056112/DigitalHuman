@@ -19,9 +19,9 @@ _TAIL = ('不要虚构照片人物的经历、身份或记忆。只返回JSON对
 SYSTEM_PROMPT = _HEAD + _TAIL
 
 
-def system_prompt(tone='natural'):
+def system_prompt(tone='natural', tone_prompt=''):
     """Insert one tone clause; the hard rules stay at the end of the prompt."""
-    clause = tone_clause(tone)
+    clause = tone_clause(tone, tone_prompt)
     return _HEAD + clause + _TAIL if clause else SYSTEM_PROMPT
 
 
@@ -180,20 +180,20 @@ class Dialogue:
         segments, _ = self._recognizer.transcribe(audio, language="zh", vad_filter=True, beam_size=3)
         return "".join(segment.text for segment in segments).strip()
 
-    def _payload(self, text, history, tone='natural'):
+    def _payload(self, text, history, tone='natural', tone_prompt=''):
         cfg = self.config.get("dialogue", {})
-        messages = [{"role": "system", "content": system_prompt(tone)},
+        messages = [{"role": "system", "content": system_prompt(tone, tone_prompt)},
                     *history[-cfg.get("context_turns", 6) * 2:], {"role": "user", "content": text}]
         return cfg, {"model": cfg.get("model", "qwen2.5-3b-instruct"), "messages": messages,
                      "max_tokens": cfg.get("max_tokens", 128), "temperature": .6, "stream": True,
                      "response_format": {"type": "json_object", "schema": REPLY_SCHEMA}}
 
-    async def stream(self, text, history, tone='natural'):
+    async def stream(self, text, history, tone='natural', tone_prompt=''):
         """Yield emotion/text events and a final Reply without waiting for the whole answer.
 
         Servers that ignore ``stream`` and return one JSON body are accepted too.
         """
-        cfg, payload = self._payload(text, history, tone)
+        cfg, payload = self._payload(text, history, tone, tone_prompt)
         url = cfg.get("base_url", "http://127.0.0.1:8081/v1") + "/chat/completions"
         client = await asyncio.to_thread(httpx.AsyncClient, timeout=120, trust_env=False)
         reader = ReplyStream()
@@ -240,9 +240,9 @@ class Dialogue:
                     raise RuntimeError('对话流在完成前断开')
                 yield {'type': 'done', 'reply': reader.reply()}
 
-    async def answer(self, text, history, tone='natural'):
+    async def answer(self, text, history, tone='natural', tone_prompt=''):
         reply = None
-        async for event in self.stream(text, history, tone):
+        async for event in self.stream(text, history, tone, tone_prompt):
             if event['type'] == 'done':
                 reply = event['reply']
         if reply is None:

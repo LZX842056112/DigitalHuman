@@ -9,7 +9,11 @@ import numpy as np
 
 TONES=('natural','warm','professional','lively')
 EXPRESSIONS=('natural','smile','serious','surprise')
-DEFAULT_SETTINGS={'tone':'natural','expression':'natural'}
+DEFAULT_SETTINGS={'tone':'natural','expression':'natural','tone_prompt':''}
+
+# A free sentence is a refinement, never a replacement. The cap keeps it from
+# overriding the hard rules a preset already wrote.
+MAX_TONE_PROMPT=60
 
 # Spoken delivery. Empty for natural so the default neutral path keeps using
 # zero-shot cloning (the closest timbre) instead of an instruction.
@@ -50,16 +54,26 @@ def normalize_expression(value):
     return value if isinstance(value,str) and value in EXPRESSIONS else 'natural'
 
 
+def normalize_tone_prompt(value):
+    """Keep one printable line, collapse runs of spaces, cut at the limit."""
+    if not isinstance(value,str):return ''
+    # A newline becomes a space; other control characters are dropped.
+    text=''.join(' ' if char.isspace() else char for char in value
+                 if char.isspace() or char.isprintable())
+    return ' '.join(text.split())[:MAX_TONE_PROMPT]
+
+
 def settings_of(manifest):
     raw=(manifest or {}).get('settings') or {}
     return {'tone':normalize_tone(raw.get('tone')),
-            'expression':normalize_expression(raw.get('expression'))}
+            'expression':normalize_expression(raw.get('expression')),
+            'tone_prompt':normalize_tone_prompt(raw.get('tone_prompt'))}
 
 
 def merge_settings(current, update):
     """Validate one partial update; unknown keys or values are rejected."""
     if not isinstance(update,dict):raise ValueError('设置格式无效')
-    unknown=set(update)-{'tone','expression'}
+    unknown=set(update)-{'tone','expression','tone_prompt'}
     if unknown:raise ValueError('未知的设置项：'+'、'.join(sorted(unknown)))
     result=settings_of(current)
     if 'tone' in update:
@@ -68,15 +82,28 @@ def merge_settings(current, update):
     if 'expression' in update:
         if update['expression'] not in EXPRESSIONS:raise ValueError('未知的表情')
         result['expression']=update['expression']
+    if 'tone_prompt' in update:
+        value=update['tone_prompt']
+        if not isinstance(value,str):raise ValueError('自定义语气必须是文字')
+        collapsed=' '.join(value.split())
+        if len(collapsed)>MAX_TONE_PROMPT:
+            raise ValueError(f'自定义语气最多 {MAX_TONE_PROMPT} 个字')
+        result['tone_prompt']=collapsed
     return result
 
 
-def voice_instruction_clause(tone):
+def voice_instruction_clause(tone, tone_prompt=''):
+    extra=normalize_tone_prompt(tone_prompt)
+    if extra:return f'请用{extra}的语气说一句话。'
     return TONE_INSTRUCTIONS[normalize_tone(tone)]
 
 
-def tone_clause(tone):
-    return TONE_PROMPTS[normalize_tone(tone)]
+def tone_clause(tone, tone_prompt=''):
+    base=TONE_PROMPTS[normalize_tone(tone)]
+    extra=normalize_tone_prompt(tone_prompt)
+    if not extra:return base
+    refinement=f'另外要求：{extra}。'
+    return base+refinement if base else refinement
 
 
 def expression_emo(value):

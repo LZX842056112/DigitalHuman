@@ -103,6 +103,15 @@ studio :7860   backend.api.app
 | `runtime.portrait_seed` | `null` | 仅诊断用：固定动作扩散噪声，便于同机 A/B |
 | `runtime.idle_timeout_seconds` | `900` | 会话空闲回收 |
 | `runtime.disk_reserve_gib` | `10` | 流式生成要求保留的磁盘空间 |
+| `edit.extend_aspect` | `3:4` | 扩图默认画幅；`9:16` 会自动分两段生成 |
+| `edit.extend_working_edge` | `768` | 扩图工作画布长边，SD1.5 超过 768 收益很小 |
+| `edit.extend_steps` | `36` | 扩图采样步数 |
+| `edit.extend_adapter_scale` | `0.35` | 同一人物上半身作 IP-Adapter 参考的强度，太高会复制原上装 |
+| `edit.extend_max_ratio_per_pass` | `1.55` | 单段允许的最大高宽比，超过就分段 |
+| `edit.extend_body_prior` | `true` | 走廊用下装底色打底；`false` 改用镜像（仅调试） |
+| `edit.preview.mode` | `decode` | `decode` 真实解码中间图；`latent` 只出色块；`off` 关闭 |
+| `edit.preview.steps_interval` | `4` | 每多少步写一张中间图 |
+| `edit.preview.skip_steps` | `2` | 前多少步仍是噪声，跳过不解码 |
 
 想完全回到原始画质：`portrait_sampling_steps: 50`、`portrait_frame_batch: 1`、`portrait_frame_stride: 1`。这三个值由渲染端每次重读配置文件，改完下一句即生效，不必重启。流式开关只在会话开始时读取，必须重启 studio。
 
@@ -119,6 +128,7 @@ studio :7860   backend.api.app
 | 设置 | 取值 | 默认 | 对最终呈现的影响 |
 |---|---|---|---|
 | 语气 | 自然 / 亲切 / 专业 / 活泼 | 自然 | 只改"怎么说"：措辞（句长、称呼、语气词、感叹号）以及平语句的发音指令；不改长相、嘴型、帧率 |
+| 自定义语气 | 自由文本，≤ 60 字 | 空 | 追加在预设之后：既写进对话提示词与语音指令，也写进照片编辑的画面神态提示词 |
 | 表情 | 自然 / 微笑 / 严肃 / 惊讶 | 自然 | 只在平语回答时改脸：Ditto 情绪软标签 + 表情动态幅度；有情绪的回答按情绪演 |
 | 造型 | 1–8 套 | 1 套 | 每套一份画面缓存。可以上传另一张照片，也可以直接对当前照片换装（换色 / 换款式） |
 
@@ -126,9 +136,20 @@ studio :7860   backend.api.app
 
 为什么换装必须改照片：渲染只重绘 512×512 的头部裁剪区，再经软边掩膜贴回原图；衣领以下、背景和光线都是源照片的像素，模型不会重绘。所以换装不是渲染参数，而是先把源照片里的衣服换掉，生成一张同人新图，再交给准备流程。
 
-界面只做一件事：**上传一张服装图片，按图给照片里的人物换装**（左侧「服装」→ 上传图片 → 可填一句描述 → 开始换装）。先填描述、再选图片、最后点开始换装；描述是选填的，但填了更准。
+界面只暴露一件事：**编辑照片**。未连接会话时，点左栏「编辑照片」，中栏切换成编辑台，三个画面并排显示原图、构图/生成中、结果。
 
-原理：先用本地 Segformer（`models/outfit/clothes-seg`）分出发型/上装得到软边掩膜，再用 SD1.5 inpainting（`models/outfit/inpaint`）重绘；服装图片由 IP-Adapter（`models/outfit/ip-adapter`）注入，提供颜色、材质和大致力。中文描述先由本地对话模型翻成英文名词短语，因为 SD1.5 只认英文，且"外套 / 衬衫 / 毛衣"这类名词决定模型画出的轮廓。约 40 秒，脸和背景逐像素不变。
+编辑台做两件事，都由显式按钮触发，不可用时按钮会说明原因：
+
+1. **生成全身照**：把半身或头像向下扩展成全身照。可选 3:4（默认）与 9:16；9:16 会自动分两段生成。动作、语气、表情各一个自由文本输入，改动后 300 ms 出构图预览，生成中每 4 步推一张中间图。
+2. **按图换装**：上传一张服装图片，可填一句描述，点「按图换装」。
+
+两类结果都会作为一套新造型加入 `variants`，需要点"准备人物"生成缓存后才能切换。
+
+原理：先用本地 Segformer（`models/outfit/clothes-seg`）给每个像素打标签，换装取上装/连衣裙做软边掩膜，扩图用头身比推算缺多少、只把"人物走廊"交给模型。两者都用 SD1.5 inpainting（`models/outfit/inpaint`）重绘，都能用 IP-Adapter（`models/outfit/ip-adapter`）注入参考。中文描述先由本地对话模型翻成英文短语，因为 SD1.5 只认英文。换装约 40 秒，扩图约 25–40 秒（9:16 分两段更久），**掩膜外的像素逐字节不变**，人脸差异必须为 0。
+
+扩图的能力边界要说清楚：没有姿态控制，"补腿"必然有一定比例的解剖错误（脚部糊、双腿融合）。画质分 good / fair / low 三档，low 时界面建议换一张照片或重试。
+
+另一个副作用：渲染器只重绘 512 px 的头部裁剪区，会话画面按照片原始比例输出。扩成全身照后，**对话画面里的脸会明显变小**，所以建议同时保留一张半身造型。
 
 旧的「换色」（8 个预设色）和「换款式」（6 个预设）已从界面移除，仍保留在 `POST /api/avatars/{id}/outfit` 接口里，需要时可脚本调用。
 
@@ -144,6 +165,10 @@ backend/
   dialogue/client.py      对话模型客户端（SSE + 增量 JSON 提取）与语音识别
   voice/                  CosyVoice 引擎、克隆路径、相似度度量、HTTP 服务、客户端
   style.py                语气与表情预设（唯一的取值与默认值来源）
+  outfit.py               换装与扩图：分割、换色、修补、全身扩展、渐进预览
+  edit_geometry.py        扩图几何：画布、人物走廊掩膜、填充、拼合、身份校验
+  prompting.py            中文提示词翻译（动作/神态/表情/服装）与提示词拼装
+  image_rules.py          上传校验：真实格式、像素上限、边长、比例、EXIF 方向
   portrait/               Ditto 引擎、分块流、照片缓存、HTTP 服务、客户端
   asr.py                  参考音频转写（本地 faster-whisper，CPU）
   transport/
@@ -177,16 +202,23 @@ studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 | POST | `/avatars/import` | multipart：`name`、`photo`、`voice_video` |
 | PUT | `/avatars/{id}/photo`、`/voice-video` | 替换素材（会清空对应校验） |
 | PUT | `/avatars/{id}/voice` | `{"confirmed": true}`，确认参考声音 |
-| PUT | `/avatars/{id}/settings` | `{"tone": "...", "expression": "..."}`，可只传一个字段 |
+| PUT | `/avatars/{id}/settings` | `{"tone": "...", "expression": "...", "tone_prompt": "..."}`，可只传一个字段 |
 | POST | `/avatars/{id}/variants` / PUT、DELETE `/variants/{vid}` | 新增、替换、删除一套造型（照片） |
 | POST | `/avatars/{id}/outfit` | 预设换色 / 预设款式（界面已隐藏，仍可由脚本调用） |
-| POST | `/avatars/{id}/outfit/wear` | multipart：`garment`（衣服图片）+ `prompt`（中文描述）+ `scale`，按图换装 |
+| POST | `/avatars/{id}/outfit/wear` | multipart：`garment`（衣服图片）+ `prompt`（中文描述）+ `scale`，按图换装（同步） |
+| POST | `/avatars/{id}/outfit/wear/job` | 同上，改为异步任务，返回 `job_id` |
+| POST | `/avatars/{id}/edit/analyze` | 分析人物几何，结果按照片哈希缓存；CPU 子进程，不占显卡 |
+| POST | `/avatars/{id}/edit/plan` | `{"aspect": "3:4", "variant_id": "..."}`，返回画布几何、构图预览地址与提示 |
+| POST | `/avatars/{id}/edit/prompt` | `{"action": "", "tone": "", "expression": ""}`，返回中英对照 |
+| GET | `/avatars/{id}/edit/compose/{name}` | 构图预览 PNG（按画幅缓存） |
+| POST | `/avatars/{id}/extend` | `{"aspect": "3:4", "action": "...", ...}`，扩成全身照，返回 `job_id` |
 | GET | `/outfit/options` | 可用的换装颜色与款式，以及本机是否装了生成模型 |
 | PUT | `/avatars/{id}/variants/{vid}/active` | 切换使用中的造型，要求该套已准备且当前无会话 |
 | POST | `/avatars/{id}/portrait/gc` | 回收没有任何造型引用的画面缓存 |
 | DELETE | `/avatars/{id}` | 删除人物（只删项目内副本） |
 | POST | `/avatars/{id}/build` | 开始准备，返回 `job_id` |
-| GET | `/jobs/{id}` | 任务进度：`stage` / `progress` / `status` |
+| GET | `/jobs/{id}` | 任务进度：`stage` / `progress` / `status` / `preview` / `result` |
+| GET | `/jobs/{id}/preview?v=N` | 渐进预览的中间图；版本不符返回 409，尚未产出返回 404 |
 | POST | `/sessions` | 新建会话，返回宽高与 25 fps |
 | POST | `/sessions/{id}/offer` | WebRTC SDP 交换 |
 | DELETE | `/sessions/{id}` | 关闭会话并回收 |
@@ -236,7 +268,13 @@ studio（`/api` 前缀，`GET /api/health` 可用于探活）：
 
 ## 常见问题
 
-**提示"请先停止准备任务或交互会话"**：同一时间只允许一个会话或一次准备。先断开连接/等任务结束。
+**提示"请先停止准备任务或交互会话"**：同一时间只允许一个会话、一次准备或一次照片编辑。先断开连接 / 等任务结束。
+
+**"未安装扩图模型"**：`models/outfit/inpaint` 里没有权重。运行 `python scripts/fetch_outfit_model.py`；只有分割模型时仍可用换色与换装。
+
+**扩出来的腿不自然**：这是没有姿态控制的固有限制。可以换一张更清晰、人物更大的照片，或改 `edit.extend_steps` 与 `edit.extend_adapter_scale` 后重试；界面的画质档位为 low 时会提示。彻底解决需要换 SDXL-inpainting 或加 ControlNet-OpenPose。
+
+**全身照让对话画面里的脸变小**：渲染器只重绘 512 px 头部裁剪区，会话画面按照片比例输出。建议同时保留一张半身造型，切对话用半身、展示用全身。
 
 **"照片服务：Internal Server Error"**：portrait worker 崩了。看 `.runtime/logs/` 下对应日志；`doctor.ps1` 会指出是模型哈希、环境还是端口问题。
 

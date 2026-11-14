@@ -665,7 +665,8 @@ async def test_settings_message_applies_to_the_next_turn(tmp_path):
     try:
         instance.message(json.dumps({'type': 'settings', 'tone': 'professional',
                                      'expression': 'smile'}))
-        assert instance.manifest['settings'] == {'tone': 'professional', 'expression': 'smile'}
+        assert instance.manifest['settings'] == {'tone': 'professional', 'expression': 'smile',
+                                                 'tone_prompt': ''}
         saved = json.loads((instance.avatar_dir/'avatar.json').read_text(encoding='utf-8'))
         assert saved['settings']['expression'] == 'smile'
         assert any(event.get('text') == '语气与表情已更新' for event in events)

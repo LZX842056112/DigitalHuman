@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager, suppress
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -28,8 +29,8 @@ from backend.photo_profiles import (add_variant, delete_variant, migrate_profile
     replace_variant, required_photo_artifacts, require_photo_ready, resolve_variant,
     set_active_variant, source_path, status_for, sync_active_variant, validate_photo_sources,
     verify_artifact_hashes)
-from backend.storage import Store, sha256, read_json
-from backend import outfit, style
+from backend.storage import Store, atomic_json, safe_id, sha256, read_json
+from backend import edit_geometry, image_rules, outfit, prompting, style
 
 
 class VoiceUpdate(BaseModel):
@@ -39,6 +40,7 @@ class VoiceUpdate(BaseModel):
 class SettingsUpdate(BaseModel):
     tone: str | None = None
     expression: str | None = None
+    tone_prompt: str | None = None
 
 
 class OutfitRequest(BaseModel):
@@ -49,6 +51,26 @@ class OutfitRequest(BaseModel):
     prompt: str | None = None
     strength: float = 1.
     label: str | None = None
+
+
+class EditPlanRequest(BaseModel):
+    variant_id: str | None = None
+    aspect: str = '3:4'
+
+
+class EditPromptRequest(BaseModel):
+    action: str = ''
+    tone: str = ''
+    expression: str = ''
+
+
+class ExtendRequest(BaseModel):
+    variant_id: str | None = None
+    aspect: str = '3:4'
+    action: str = ''
+    tone: str = ''
+    expression: str = ''
+    seed: int = 0
 
 
 class SessionRequest(BaseModel):
@@ -125,11 +147,11 @@ def create_app(root=None):
     store=Store(root);config=load_config(root) or {}
     pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='photo-prepare')
     operation_lock=threading.RLock()
-    sessions={};building=set();loading=set();deleting=set();outfitting=set()
+    sessions={};building=set();loading=set();deleting=set();outfitting=set();editing=set()
 
     def busy():
-        if building or sessions or loading or deleting or outfitting:
-            raise HTTPException(409,'请先停止准备任务或交互会话')
+        if building or sessions or loading or deleting or outfitting or editing:
+            raise HTTPException(409,'请先停止准备任务、编辑任务或交互会话')
 
     async def close_session(key,session):
         try:
@@ -183,11 +205,14 @@ def create_app(root=None):
         try:return migrate_profile(store.manifest(avatar_id))
         except (OSError,ValueError,KeyError,IndexError):raise HTTPException(404,'人物不存在或资料无效')
 
+    image_roles={'photo','garment'}
     async def upload_file(upload,temporary,role,limit=1024**3):
         filename=upload.filename or ''
         if not filename or '/' in filename or '\\' in filename or ':' in filename or filename.startswith('.'):
             raise HTTPException(400,'素材文件名无效')
-        allowed={'.png','.jpg','.jpeg'} if role=='photo' else {'.mp4','.mov','.mkv','.webm'}
+        if role=='photo':allowed={'.png','.jpg','.jpeg'}
+        elif role=='garment':allowed={'.png','.jpg','.jpeg','.webp'}
+        else:allowed={'.mp4','.mov','.mkv','.webm'}
         if Path(filename).suffix.lower() not in allowed:raise HTTPException(400,'素材格式不受支持')
         path=temporary/role/filename;path.parent.mkdir(parents=True,exist_ok=True)
         size=0
@@ -197,6 +222,12 @@ def create_app(root=None):
                 if size>limit:raise HTTPException(413,f'单个素材不能超过{limit//1024**2}MB')
                 stream.write(block)
         if size==0:raise HTTPException(400,'素材文件为空')
+        # The extension only says what the browser claimed. Read the real
+        # format and pixel size before this file can reach any model.
+        if role in image_roles:
+            try:image_rules.verify_image(path,role)
+            except image_rules.ImageRuleError as error:
+                raise HTTPException(error.status,str(error)) from error
         return path
 
     @app.get('/api/health')
@@ -288,12 +319,13 @@ def create_app(root=None):
                 and (root/'models/outfit/ip-adapter/models'/outfit.ADAPTER_WEIGHT).is_file()
                 and (root/'models/outfit/ip-adapter/models/image_encoder/model.safetensors').is_file())
 
-    def run_outfit(photo,out,spec,timeout):
+    def run_outfit(photo,out,spec,timeout,job_id=None):
         """One photo edit runs in its own process: torch is released on exit."""
         env={**os.environ,'PYTHONPATH':str(root),'DIGITAL_HUMAN_ROOT':str(root),
              'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1'}
         command=[sys.executable,'-m','backend.outfit','--photo',str(photo),'--out',str(out),
                  '--spec',json.dumps(spec,ensure_ascii=False)]
+        if job_id:command+=['--job-id',str(job_id)]
         result=subprocess.run(command,cwd=str(root),env=env,capture_output=True,text=True,
                               timeout=timeout)
         lines=[line for line in (result.stdout or '').strip().splitlines() if line.strip()]
@@ -344,7 +376,7 @@ def create_app(root=None):
         person,photo=outfit_subject(avatar_id,variant_id)
         temporary=root/'work/uploads'/uuid.uuid4().hex
         try:
-            path=await upload_file(garment,temporary,'photo',limit=20*1024**2)
+            path=await upload_file(garment,temporary,'garment',limit=20*1024**2)
             head=description.replace('，',',').split(',')[0][:8]
             spec={'mode':'wear','garment':str(path),
                   'describe':description or None,
@@ -397,6 +429,253 @@ def create_app(root=None):
         finally:
             with operation_lock:outfitting.discard(avatar_id)
             shutil.rmtree(temporary,ignore_errors=True)
+
+    # -- photo editing workbench -------------------------------------------
+    # Analysis runs in a subprocess on CPU, so this process still never loads
+    # torch. The result is cached per photo, which makes every later plan
+    # change a numpy calculation of about 60 ms.
+
+    ASPECTS={'3:4':.75,'9:16':.5625}
+    EDIT_ROLES=('action','tone','expression')
+
+    def edit_config():
+        return config.get('edit') or {}
+
+    def edit_source(avatar_id,variant_id=None):
+        """Read-only variant resolution. Does not take the edit slot."""
+        person=avatar(avatar_id)
+        try:variant=resolve_variant(person,variant_id or None)
+        except (KeyError,ValueError) as error:raise HTTPException(400,'找不到这套造型') from error
+        folder=store.avatar_dir(avatar_id)
+        photo=source_path(folder,variant['photo'])
+        if not photo.is_file() or sha256(photo)!=person['sources'].get(variant['photo']):
+            raise HTTPException(400,'照片来源校验失败')
+        return person,variant,photo
+
+    def edit_folder(photo):
+        return root/'work/edit'/sha256(photo)[:16]
+
+    def analysis_of(photo):
+        try:return read_json(edit_folder(photo)/'analysis.json')
+        except (OSError,ValueError):return None
+
+    def run_analyze(photo,timeout=300):
+        env={**os.environ,'PYTHONPATH':str(root),'DIGITAL_HUMAN_ROOT':str(root),
+             'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','CUDA_VISIBLE_DEVICES':''}
+        result=subprocess.run([sys.executable,'-m','backend.outfit','--photo',str(photo),
+                               '--analyze'],cwd=str(root),env=env,capture_output=True,
+                              text=True,timeout=timeout)
+        lines=[line for line in (result.stdout or '').strip().splitlines() if line.strip()]
+        if not lines:
+            raise HTTPException(500,f'人物分析没有输出：{(result.stderr or "")[-200:]}')
+        try:report=json.loads(lines[-1])
+        except json.JSONDecodeError:
+            raise HTTPException(500,'人物分析返回了无法解析的结果') from None
+        if report.get('error'):raise HTTPException(400,report['error'])
+        return report
+
+    @app.post('/api/avatars/{avatar_id}/edit/analyze')
+    def edit_analyze(avatar_id:str,variant_id:str=''):
+        with operation_lock:busy();person,variant,photo=edit_source(avatar_id,variant_id or None)
+        cached=analysis_of(photo)
+        if cached is not None:return cached
+        report=run_analyze(photo)
+        folder=edit_folder(photo);folder.mkdir(parents=True,exist_ok=True)
+        atomic_json(folder/'analysis.json',report)
+        return report
+
+    @app.post('/api/avatars/{avatar_id}/edit/prompt')
+    def edit_prompt(avatar_id:str,body:EditPromptRequest):
+        avatar(avatar_id)
+        result={}
+        for kind in EDIT_ROLES:
+            text=(getattr(body,kind) or '').strip()[:120]
+            result[kind]={'zh':text,
+                          'en':prompting.translate_cached(text,kind) if text else ''}
+        return result
+
+    @app.post('/api/avatars/{avatar_id}/edit/plan')
+    def edit_plan(avatar_id:str,body:EditPlanRequest):
+        import numpy as np
+        from PIL import Image
+        aspect=ASPECTS.get(body.aspect)
+        if aspect is None:raise HTTPException(400,'不支持的画幅')
+        with operation_lock:busy();person,variant,photo=edit_source(avatar_id,body.variant_id)
+        analysis=analysis_of(photo)
+        if analysis is None:raise HTTPException(409,'请先分析人物照片')
+        settings=edit_config()
+        plan=edit_geometry.plan_canvas(
+            int(analysis['size'][0]),int(analysis['size'][1]),
+            tuple(int(value) for value in analysis['box']),float(analysis['head']),
+            aspect=aspect,
+            headroom=float(settings.get('extend_headroom_ratio',.05)),
+            min_gain=float(settings.get('extend_min_gain_ratio',.06)),
+            max_gain=float(settings.get('extend_max_gain_ratio',2.2)))
+        warnings=[]
+        if plan['skipped']:
+            warnings.append('这张照片已接近全身，无需扩展')
+        else:
+            if plan.get('capped'):
+                warnings.append('照片里的人物太大，本次只能扩到七分身左右；要全身照请换一张半身照')
+            if 1./aspect>float(settings.get('extend_max_ratio_per_pass',1.55)):
+                warnings.append(f'{body.aspect} 会分两段生成，约需 60 秒')
+        compose={'url':None,'width':0,'height':0}
+        if not plan['skipped']:
+            folder=edit_folder(photo);folder.mkdir(parents=True,exist_ok=True)
+            name='compose-'+body.aspect.replace(':','x')+'.png'
+            target=folder/name
+            if not target.is_file():
+                image=image_rules.open_normalized(photo)
+                colors={key:np.asarray(value,np.float32)
+                        for key,value in analysis['colors'].items()}
+                mask,_=edit_geometry.build_mask(plan['canvas'],plan['offset'],
+                    tuple(int(value) for value in analysis['box']),plan['source'])
+                canvas,_=edit_geometry.fill_canvas(image,plan,mask,colors,
+                    body_prior_fill=bool(settings.get('extend_body_prior',True)),seed=0)
+                Image.fromarray(canvas).save(target,format='PNG')
+            compose={'url':f'/api/avatars/{avatar_id}/edit/compose/{name}',
+                     'width':plan['canvas'][0],'height':plan['canvas'][1]}
+        return {'plan':plan,'compose':compose,'warnings':warnings,
+                'analysis':{'size':analysis['size'],'box':analysis['box'],
+                            'head':analysis['head']}}
+
+    @app.get('/api/avatars/{avatar_id}/edit/compose/{name}')
+    def edit_compose(avatar_id:str,name:str):
+        person,variant,photo=edit_source(avatar_id)
+        if not re.fullmatch(r'compose-[0-9]+x[0-9]+\.png',name):
+            raise HTTPException(404,'素材不存在')
+        path=edit_folder(photo)/name
+        if not path.is_file():raise HTTPException(404,'素材不存在')
+        return FileResponse(path,headers={'Cache-Control':'no-store'})
+
+    def edit_spec(job_id,body,aspect):
+        settings=edit_config()
+        return {'mode':'extend','aspect':aspect,
+                'action':body.action.strip()[:120],'tone':body.tone.strip()[:60],
+                'expression':body.expression.strip()[:60],'seed':int(body.seed),
+                'steps':int(settings.get('extend_steps',36)),
+                'working_edge':int(settings.get('extend_working_edge',768)),
+                'guidance':float(settings.get('extend_guidance',6.5)),
+                'scale':float(settings.get('extend_adapter_scale',.35)),
+                'headroom':float(settings.get('extend_headroom_ratio',.05)),
+                'min_gain':float(settings.get('extend_min_gain_ratio',.06)),
+                'max_gain':float(settings.get('extend_max_gain_ratio',2.2)),
+                'max_ratio_per_pass':float(settings.get('extend_max_ratio_per_pass',1.55)),
+                'body_prior':bool(settings.get('extend_body_prior',True)),
+                'output_edge':int(settings.get('extend_output_edge',1536)),
+                'preview':settings.get('preview') or {},
+                'preview_dir':str(root/'work/previews'/job_id)}
+
+    def edit_failure(error):
+        if isinstance(error,subprocess.TimeoutExpired):return '扩图超时，请换一张更小的照片'
+        if isinstance(error,HTTPException):return str(error.detail)
+        text=str(error).strip()
+        return text[:200] or '扩图未完成'
+
+    def edit_result(job_id,person,report):
+        variant=person['variants'][-1]
+        store.update_job(job_id,status='complete',stage='complete',progress=1,
+            result={'variant_id':variant['id'],'label':variant['label'],
+                    'quality':report.get('quality'),'metrics':report})
+
+    @app.post('/api/avatars/{avatar_id}/extend',status_code=202)
+    def start_extend(avatar_id:str,body:ExtendRequest):
+        if not outfit_model_ready():
+            raise HTTPException(503,'未安装扩图模型，请先运行 scripts/fetch_outfit_model.py')
+        aspect=ASPECTS.get(body.aspect)
+        if aspect is None:raise HTTPException(400,'不支持的画幅')
+        with operation_lock:
+            busy();person,variant,photo=edit_source(avatar_id,body.variant_id)
+            lease=GpuLease(root);lease.acquire()
+            editing.add(avatar_id)
+            job=store.new_job(avatar_id,'extend')
+            person['last_job_id']=job['id'];store.write_manifest(avatar_id,person)
+        temporary=root/'work/outfit'/uuid.uuid4().hex
+        spec=edit_spec(job['id'],body,aspect)
+
+        def run():
+            try:
+                temporary.mkdir(parents=True,exist_ok=True)
+                store.update_job(job['id'],status='running',stage='analyze',progress=.05)
+                report=run_outfit(photo,temporary/'out.png',spec,timeout=900,job_id=job['id'])
+                with operation_lock:
+                    editing.discard(avatar_id)
+                    busy()
+                    if report.get('skipped'):
+                        store.update_job(job['id'],status='complete',stage='complete',progress=1,
+                            result={'skipped':report['skipped'],'label':report.get('label')})
+                        return
+                    person=add_variant(store,avatar_id,temporary/'out.png',
+                        report.get('label') or '全身',limit=variant_limit())
+                edit_result(job['id'],person,report)
+            except Exception as error:  # noqa: BLE001 - the job carries the reason
+                store.update_job(job['id'],status='failed',error=edit_failure(error))
+            finally:
+                lease.release()
+                with operation_lock:editing.discard(avatar_id)
+                shutil.rmtree(temporary,ignore_errors=True)
+
+        pool.submit(run)
+        return {'job_id':job['id']}
+
+    @app.post('/api/avatars/{avatar_id}/outfit/wear/job',status_code=202)
+    async def wear_outfit_job(avatar_id:str,garment:UploadFile=File(...),label:str=Form(''),
+                              prompt:str=Form(''),variant_id:str=Form(''),scale:float=Form(.9)):
+        if not outfit_adapter_ready():
+            raise HTTPException(503,'衣服参考模型尚未安装，请先换色或选款式')
+        description=prompt.strip()[:80]
+        with operation_lock:
+            busy();person,variant,photo=edit_source(avatar_id,variant_id or None)
+            lease=GpuLease(root);lease.acquire()
+            editing.add(avatar_id)
+            job=store.new_job(avatar_id,'wear')
+        temporary=root/'work/uploads'/uuid.uuid4().hex
+        try:
+            path=await upload_file(garment,temporary,'garment',limit=20*1024**2)
+        except BaseException:
+            lease.release()
+            with operation_lock:editing.discard(avatar_id)
+            shutil.rmtree(temporary,ignore_errors=True)
+            raise
+        head=description.replace('，',',').split(',')[0][:8]
+        spec={'mode':'wear','garment':str(path),'describe':description or None,
+              'label':(label or (('换装·'+head) if head else '')).strip() or None,
+              'scale':max(.3,min(1.2,float(scale)))}
+        store.update_job(job['id'],status='running',stage='canvas',progress=.1)
+        produced=temporary/'out.png'
+
+        def run():
+            try:
+                report=run_outfit(photo,produced,spec,timeout=900)
+                with operation_lock:
+                    editing.discard(avatar_id)
+                    busy()
+                    person=add_variant(store,avatar_id,produced,
+                        report.get('label') or '换装',limit=variant_limit())
+                edit_result(job['id'],person,report)
+            except Exception as error:  # noqa: BLE001 - the job carries the reason
+                store.update_job(job['id'],status='failed',error=edit_failure(error))
+            finally:
+                lease.release()
+                with operation_lock:editing.discard(avatar_id)
+                shutil.rmtree(temporary,ignore_errors=True)
+
+        pool.submit(run)
+        return {'job_id':job['id']}
+
+    @app.get('/api/jobs/{job_id}/preview')
+    def job_preview(job_id:str,v:int|None=None):
+        try:job=store.job(job_id)
+        except (OSError,ValueError):raise HTTPException(404,'任务不存在')
+        preview=job.get('preview') or {}
+        name=preview.get('file')
+        if not isinstance(name,str) or not re.fullmatch(r'step-[0-9]{4}\.png',name):
+            raise HTTPException(404,'还没有中间画面')
+        if v is not None and int(v)!=int(preview.get('version') or 0):
+            raise HTTPException(409,'中间画面已更新，请重新读取任务')
+        path=root/'work/previews'/safe_id(job_id)/name
+        if not path.is_file():raise HTTPException(404,'还没有中间画面')
+        return FileResponse(path,headers={'Cache-Control':'no-store'})
 
     @app.put('/api/avatars/{avatar_id}/variants/{variant_id}')
     async def update_variant(avatar_id:str,variant_id:str,photo:UploadFile=File(...)):

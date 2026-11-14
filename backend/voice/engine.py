@@ -19,8 +19,9 @@ from backend.voice.client import normalize_speech
 from backend.stage_timing import StageTiming
 
 
-def voice_cache_key(reference_digest,emotion,revision,prompt_text='',mode='instruct',tone='natural'):
-    parts=(reference_digest,voice_instruction(emotion,tone),revision,mode,prompt_text or '')
+def voice_cache_key(reference_digest,emotion,revision,prompt_text='',mode='instruct',tone='natural',
+                    tone_prompt=''):
+    parts=(reference_digest,voice_instruction(emotion,tone,tone_prompt),revision,mode,prompt_text or '')
     return hashlib.sha256('\0'.join(parts).encode()).hexdigest()
 
 
@@ -89,18 +90,19 @@ class VoiceEngine:
                                                 for name,value in values.items()}
         gc.collect();torch.cuda.empty_cache()
 
-    def _speaker(self,reference,emotion,cache_folder,prompt_text='',mode='instruct',tone='natural'):
+    def _speaker(self,reference,emotion,cache_folder,prompt_text='',mode='instruct',tone='natural',
+                 tone_prompt=''):
         digest=sha256(reference);identity=(digest,self.revision)
         if getattr(self,'_speaker_identity',None)!=identity:
             self.voice.frontend.spk2info.clear();self._speaker_identity=identity
-        key=voice_cache_key(digest,emotion,self.revision,prompt_text,mode,tone)
+        key=voice_cache_key(digest,emotion,self.revision,prompt_text,mode,tone,tone_prompt)
         cache=Path(cache_folder or reference.parent)/('prompt-'+key+'.safetensors')
         from safetensors.torch import save_file,load_file
         if key not in self.voice.frontend.spk2info:
             if cache.is_file():self.voice.frontend.spk2info[key]=load_file(str(cache))
             else:
                 seed=(zero_shot_prompt_text(prompt_text)
-                      if mode=='zero_shot' and prompt_text else voice_instruction(emotion,tone))
+                      if mode=='zero_shot' and prompt_text else voice_instruction(emotion,tone,tone_prompt))
                 self.voice.add_zero_shot_spk(seed,str(reference),key)
                 values={name:value.detach().cpu().contiguous().clone()
                         for name,value in self.voice.frontend.spk2info[key].items()}
@@ -124,7 +126,7 @@ class VoiceEngine:
         model.llm_job=guarded
 
     def _native_chunks(self,text,emotion,reference,key,*,stream,cancelled=None,mode='instruct',
-                       tone='natural'):
+                       tone='natural',tone_prompt=''):
         self._protect_native_jobs();model=self.voice.model
         threads=getattr(model,'_digitalhuman_threads',{});errors=getattr(model,'_digitalhuman_errors',{})
         before=set(threads);stopping=False
@@ -147,7 +149,7 @@ class VoiceEngine:
             native=iter(self.voice.inference_zero_shot(text,'',str(reference),
                 zero_shot_spk_id=key,stream=stream))
         else:
-            native=iter(self.voice.inference_instruct2(text,voice_instruction(emotion,tone),str(reference),
+            native=iter(self.voice.inference_instruct2(text,voice_instruction(emotion,tone,tone_prompt),str(reference),
                 zero_shot_spk_id=key,stream=stream))
         def check_error():
             for identity in set(errors)-before:
@@ -180,7 +182,8 @@ class VoiceEngine:
             if drain_error is not None and original_error is None:raise drain_error
 
     def stream_synthesize(self,text,reference,emotion='neutral',cache_folder=None,cancelled=None,
-                          *,session_id,token,prompt_text='',mode='instruct',tone='natural'):
+                          *,session_id,token,prompt_text='',mode='instruct',tone='natural',
+                          tone_prompt=''):
         from backend.stream_audio import SpeechNormalizer
         if not isinstance(text,str) or not text.strip():raise ValueError('回答文字为空')
         emotion=normalize_emotion(emotion);reference=Path(reference)
@@ -197,11 +200,11 @@ class VoiceEngine:
                     for network in networks:network.cuda()
                 if networks:torch.cuda.reset_peak_memory_stats()
                 with timing.measure('reference_ms'):
-                    key=self._speaker(reference,emotion,cache_folder,prompt_text,mode,tone)
+                    key=self._speaker(reference,emotion,cache_folder,prompt_text,mode,tone,tone_prompt)
                 self.voice.model.token_hop_len=25
                 normalizer=SpeechNormalizer(self.voice.sample_rate)
                 native=self._native_chunks(text,emotion,reference,key,stream=True,cancelled=cancelled,
-                    mode=mode,tone=tone)
+                    mode=mode,tone=tone,tone_prompt=tone_prompt)
                 stopped=False
                 while True:
                     with timing.measure('inference_ms'):
@@ -240,7 +243,7 @@ class VoiceEngine:
                     with timing.measure('offload_ms'):self.offload()
 
     def synthesize(self,text,reference,emotion='neutral',cache_folder=None,cancelled=None,
-                   prompt_text='',mode='instruct',tone='natural'):
+                   prompt_text='',mode='instruct',tone='natural',tone_prompt=''):
         if not isinstance(text,str) or not text.strip():raise ValueError('回答文字为空')
         emotion=normalize_emotion(emotion);reference=Path(reference);started=clock.monotonic()
         with gpu_operation(self.root,cancelled),torch.inference_mode():
@@ -249,10 +252,10 @@ class VoiceEngine:
                 self._load()
                 for network in self._networks():network.cuda()
                 torch.cuda.reset_peak_memory_stats()
-                key=self._speaker(reference,emotion,cache_folder,prompt_text,mode,tone)
+                key=self._speaker(reference,emotion,cache_folder,prompt_text,mode,tone,tone_prompt)
                 chunks=[]
                 native=self._native_chunks(text,emotion,reference,key,stream=False,cancelled=cancelled,
-                    mode=mode,tone=tone)
+                    mode=mode,tone=tone,tone_prompt=tone_prompt)
                 for chunk in native:
                     if cancelled and cancelled():raise InterruptedError('当前回答已停止')
                     chunks.append(chunk['tts_speech'].detach().float().cpu().numpy().reshape(-1))

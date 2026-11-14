@@ -13,9 +13,25 @@ from fastapi.testclient import TestClient
 from backend.storage import Store, sha256
 
 
+def png_bytes(size=(400, 500), tag=1):
+    """A real PNG. Upload validation reads the actual format and pixel size.
+
+    ``tag`` marks one pixel so two uploads never share a SHA-256. Several
+    tests depend on "same file" and "different file" being distinguishable.
+    """
+    from io import BytesIO
+    from PIL import Image
+    image = Image.new('RGB', size, (180, 160, 140))
+    if tag:
+        image.putpixel((0, 0), (tag % 256, 7, 11))
+    buffer = BytesIO()
+    image.save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
 def imported(client):
     response = client.post('/api/avatars/import', data={'name': '照片人物'}, files={
-        'photo': ('photo.png', b'photo-one', 'image/png'),
+        'photo': ('photo.png', png_bytes(), 'image/png'),
         'voice_video': ('voice.mp4', b'voice-one', 'video/mp4')})
     assert response.status_code == 201, response.text
     return response.json()['avatar_id']
@@ -122,13 +138,14 @@ def test_import_photo_fields_and_original_video_is_not_public(tmp_path):
         avatar_id = imported(client)
         person = client.get('/api/avatars/' + avatar_id).json()
         assert person['schema_version'] == 3 and person['mode'] == 'photo'
-        assert person['settings'] == {'tone': 'natural', 'expression': 'natural'}
+        assert person['settings'] == {'tone': 'natural', 'expression': 'natural',
+                                      'tone_prompt': ''}
         assert len(person['variants']) == 1 and person['active_variant'] == person['variants'][0]['id']
         assert person['variants'][0]['photo'] == person['photo']
         assert person['voice'] == {'confirmed': False, 'language': 'zh'}
         assert person['validation'] == {'photo': False, 'voice': False}
         assert person['portrait'] is None and person['last_job_id']
-        assert client.get(f'/api/avatars/{avatar_id}/files/{person["photo"]}').content == b'photo-one'
+        assert client.get(f'/api/avatars/{avatar_id}/files/{person["photo"]}').content == png_bytes()
         assert client.get(f'/api/avatars/{avatar_id}/files/{person["voice_video"]}').status_code == 404
         assert client.get(f'/api/avatars/{avatar_id}/heads').status_code == 404
         assert client.post(f'/api/avatars/{avatar_id}/heads/prepare').status_code == 404
@@ -207,12 +224,12 @@ def test_replacing_each_source_keeps_the_other_source_and_raw_file(tmp_path, mod
     with TestClient(create_app(tmp_path)) as client:
         avatar_id = imported(client)
         old = prepare_ready(client, avatar_id)
-        response = client.put(f'/api/avatars/{avatar_id}/photo', files={'photo': ('new.png', b'photo-two', 'image/png')})
+        response = client.put(f'/api/avatars/{avatar_id}/photo', files={'photo': ('new.png', png_bytes(tag=2), 'image/png')})
         assert response.status_code == 200
         person = client.get('/api/avatars/' + avatar_id).json()
         assert person['voice_video'] == old['voice_video'] and person['voice']['confirmed']
         assert person['validation'] == {'photo': False, 'voice': True}
-        assert (tmp_path/'data/avatars'/avatar_id/old['photo']).read_bytes() == b'photo-one'
+        assert (tmp_path/'data/avatars'/avatar_id/old['photo']).read_bytes() == png_bytes()
         new_photo = person['photo']
         response = client.put(f'/api/avatars/{avatar_id}/voice-video', files={'voice_video': ('new.mp4', b'voice-two', 'video/mp4')})
         assert response.status_code == 200
@@ -543,7 +560,7 @@ def test_add_variant_then_switch_uses_its_own_cache(tmp_path, model_io, monkeypa
         job = client.post(f'/api/avatars/{avatar_id}/build').json()['job_id']
         assert wait_job(client, job)['status'] == 'complete'
         response = client.post(f'/api/avatars/{avatar_id}/variants',
-            files={'photo': ('second.png', b'photo-two', 'image/png')})
+            files={'photo': ('second.png', png_bytes(tag=2), 'image/png')})
         assert response.status_code == 201, response.text
         person = response.json()
         second = [item for item in person['variants'] if item['photo'] != person['variants'][0]['photo']][0]
@@ -570,9 +587,11 @@ def test_settings_put_persists_and_validates(tmp_path, model_io):
         avatar_id = imported(client)
         response = client.put(f'/api/avatars/{avatar_id}/settings', json={'tone': 'lively'})
         assert response.status_code == 200
-        assert response.json()['settings'] == {'tone': 'lively', 'expression': 'natural'}
+        assert response.json()['settings'] == {'tone': 'lively', 'expression': 'natural',
+                                               'tone_prompt': ''}
         person = client.get('/api/avatars/' + avatar_id).json()
-        assert person['settings'] == {'tone': 'lively', 'expression': 'natural'}
+        assert person['settings'] == {'tone': 'lively', 'expression': 'natural',
+                                      'tone_prompt': ''}
         assert client.put(f'/api/avatars/{avatar_id}/settings',
             json={'expression': 'grin'}).status_code == 400
         assert client.get('/api/avatars/' + avatar_id).json()['settings']['expression'] == 'natural'
@@ -653,8 +672,28 @@ def test_wear_adds_a_variant_from_an_uploaded_garment(tmp_path, model_io, monkey
     with TestClient(create_app(tmp_path)) as client:
         avatar_id = imported(client)
         response = client.post(f'/api/avatars/{avatar_id}/outfit/wear',
-                               files={'garment': ('denim.png', b'denim-bytes', 'image/png')})
+                               files={'garment': ('denim.png', png_bytes((320, 400)), 'image/png')})
         assert response.status_code == 201, response.text
         person = response.json()
         assert person['variants'][-1]['label'] == '换装·藏青'
         assert person['active_variant'] != person['variants'][-1]['id']
+
+
+def test_photo_upload_rejects_bytes_that_are_not_an_image(tmp_path):
+    from backend.api.app import create_app
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.post('/api/avatars/import', data={'name': '坏图'}, files={
+            'photo': ('photo.png', b'not-an-image', 'image/png'),
+            'voice_video': ('v.mp4', b'voice-bytes', 'video/mp4')})
+        assert response.status_code == 400
+        assert '图片无法读取' in response.json()['detail']
+
+
+def test_photo_upload_rejects_a_picture_that_is_too_small(tmp_path):
+    from backend.api.app import create_app
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.post('/api/avatars/import', data={'name': '小图'}, files={
+            'photo': ('photo.png', png_bytes((200, 260), tag=3), 'image/png'),
+            'voice_video': ('v.mp4', b'voice-bytes', 'video/mp4')})
+        assert response.status_code == 400
+        assert '短边至少 320' in response.json()['detail']

@@ -5,10 +5,20 @@ from backend.api.app import create_app
 from backend.gpu import GpuLease
 
 
+def photo_bytes(size=(400, 500)):
+    from io import BytesIO
+    from PIL import Image
+    buffer = BytesIO()
+    image = Image.new('RGB', size, (180, 160, 140))
+    image.putpixel((0, 0), (3, 7, 11))
+    image.save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
 def imported(client,name='人物'):
     response=client.post('/api/avatars/import',data={'name':name},files=[
         ('voice_video',('video.mp4',b'original-video','video/mp4')),
-        ('photo',('body.png',b'original-photo','image/png'))])
+        ('photo',('body.png',photo_bytes(),'image/png'))])
     assert response.status_code==201
     return response.json()['avatar_id']
 

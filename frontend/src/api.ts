@@ -4,3 +4,4 @@ export async function api(path:string, init?:RequestInit){
  return response.json();
 }
 export const json=(value:unknown)=>({headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
+export function fileUrl(id:string,path:string){return '/api/avatars/'+encodeURIComponent(id)+'/files/'+path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}

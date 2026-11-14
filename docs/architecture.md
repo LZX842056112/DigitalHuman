@@ -42,7 +42,16 @@
 
 四个进程由 `scripts/services.py` 拉起，登记在 `.runtime/services.json`（pid + `/proc` 启动时刻 + 命令行）。停止时只杀自己登记过的进程，PID 复用不会误杀。
 
-studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事件循环跑会话；两个 worker 各自持有一把进程内 `threading.Lock`，保证同一时刻只有一个原生推理。
+studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"与"照片编辑"，用事件循环跑会话；两个 worker 各自持有一把进程内 `threading.Lock`，保证同一时刻只有一个原生推理。
+
+照片编辑还有两个一次性子进程，都不常驻：
+
+| 子进程 | 用途 | 设备 | 退出后果 |
+|---|---|---|---|
+| `python -m backend.outfit --analyze` | 人物分割与几何，产出可缓存的 JSON | CPU（`CUDA_VISIBLE_DEVICES=''`） | 只影响下一次分析是否重算 |
+| `python -m backend.outfit --spec ...` | 换装或扩图生成 | GPU（studio 先持 `GpuLease`） | 显存随进程退出释放 |
+
+分析走 CPU 的原因：它只跑一次、结果按照片哈希缓存，不值得为它和会话抢卡；也避免在"没有编辑任务"时占用显存。生成必须走 GPU，所以租约由 **studio 进程**持有、子进程只负责计算——子进程自己再抢一次会把自己锁死。
 
 ## 3. 模块职责
 
@@ -55,7 +64,10 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
 | `backend/transport/video_quality.py` | 本地 VP8 编码参数与发送节拍 | 不改动已安装的 aiortc |
 | `backend/voice/*` | 语音合成引擎、HTTP 服务、客户端 | 不关心句子从哪来 |
 | `backend/portrait/*` | 照片准备、动作扩散、画面合成、分块流 | 不关心音频怎么合成 |
-| `backend/outfit.py` | 换装：服装分割、Lab 换色、本地修补（独立子进程，用完即退） | 只在准备阶段改源照片，不碰实时链路 |
+| `backend/outfit.py` | 换装与扩图：服装分割、Lab 换色、本地修补、全身扩展、渐进预览回调（独立子进程，用完即退） | 只在准备阶段改源照片，不碰实时链路 |
+| `backend/edit_geometry.py` | 扩图的画布几何、人物走廊掩膜、填充、拼合、身份校验 | 不 import torch，不读配置，不落盘 |
+| `backend/prompting.py` | 中文提示词翻译（动作/神态/表情/服装）、磁盘缓存、正负提示词拼装 | 不抛异常，翻译失败一律返回空串 |
+| `backend/image_rules.py` | 上传校验：真实格式、像素上限、边长、比例、EXIF 只读方向 | 不改写源文件，不做缩放 |
 | `backend/dialogue/client.py` | 对话 SSE、JSON 增量解析、ASR | 不做情感到模型的映射 |
 | `backend/gpu.py` | 跨进程 GPU 租约、显存准入、取消标记 | 不管理模型权重 |
 | `backend/stream_jobs.py` | 临时目录、音频 spool、NDJSON 校验 | 不做业务判断 |
@@ -76,7 +88,7 @@ studio 用 `ThreadPoolExecutor(max_workers=1)` 串行跑"准备人物"，用事�
   "id": "a65c8bdc...",
   "name": "小夏",
   "status": "ready",              // imported | preparing | voice_pending | ready | failed
-  "settings": { "tone": "natural", "expression": "natural" },
+  "settings": { "tone": "natural", "expression": "natural", "tone_prompt": "" },
   "variants": [{
     "id": "v3f2a1c8d0b4", "label": "日常",
     "photo": "source/photo/<uuid>/me.jpg",

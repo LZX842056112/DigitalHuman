@@ -351,15 +351,19 @@ class PhotoSession:
                 self.emit('reply_partial',text=''.join(feed.items))
 
         try:
-            tone=settings_of(self.manifest)['tone']
+            settings=settings_of(self.manifest)
+            tone=settings['tone'];tone_prompt=settings['tone_prompt']
+            # Omitted when empty so the default path calls the client exactly
+            # as before; the prompt string is identical either way.
+            extra={'tone_prompt':tone_prompt} if tone_prompt else {}
             stream=getattr(self.dialogue,'stream',None)
             if stream is None or not self.config.get('runtime',{}).get('dialogue_streaming',True):
-                reply=parse_reply(await self.dialogue.answer(text,list(self.history),tone))
+                reply=parse_reply(await self.dialogue.answer(text,list(self.history),tone,**extra))
                 feed.add(feed.splitter.feed(reply.text));feed.add(feed.splitter.flush())
                 self._phase_timing(generation,'llm_ms',started)
                 publish();record(reply);feed.finish(reply=reply)
                 return
-            async with aclosing(stream(text,list(self.history),tone)) as events:
+            async with aclosing(stream(text,list(self.history),tone,**extra)) as events:
                 async for event in events:
                     kind=event.get('type')
                     if kind=='emotion':
@@ -588,7 +592,8 @@ class PhotoSession:
             if kind == 'interrupt':
                 self.interrupt()
             elif kind == 'settings':
-                update = {key: data[key] for key in ('tone', 'expression') if key in data}
+                update = {key: data[key] for key in ('tone', 'expression', 'tone_prompt')
+                          if key in data}
                 settings = merge_settings(self.manifest, update)
                 self.manifest['settings'] = settings
                 atomic_json(self.avatar_dir / 'avatar.json', self.manifest)

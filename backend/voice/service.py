@@ -28,18 +28,21 @@ CLONE_MODE=str(((load_config(ROOT) or {}).get('runtime') or {}).get('voice_clone
 TONE_VOICE=bool(((load_config(ROOT) or {}).get('runtime') or {}).get('tone_voice',True))
 
 
-def clone_settings(emotion,text,tone='natural',mode=None):
+def clone_settings(emotion,text,tone='natural',mode=None,tone_prompt=''):
     """Pick the cloning path: zero_shot needs a real transcript.
 
     zero-shot ignores the instruction, so a non-neutral tone has to move
-    neutral turns to instruct2 for the tone to be audible at all.
+    neutral turns to instruct2 for the tone to be audible at all. A free text
+    tone counts as a tone here: without this check "natural" plus a custom
+    sentence would silently stay zero-shot and change nothing.
     """
     prompt=(text or '').strip()
     mode=mode or CLONE_MODE
     if not prompt or mode=='instruct':return 'instruct',''
     if mode=='zero_shot':return 'zero_shot',prompt
     if normalize_emotion(emotion)!='neutral':return 'instruct',''
-    if TONE_VOICE and normalize_tone(tone)!='natural':return 'instruct',''
+    if TONE_VOICE and (normalize_tone(tone)!='natural' or (tone_prompt or '').strip()):
+        return 'instruct',''
     return 'zero_shot',prompt
 
 
@@ -87,7 +90,8 @@ def tts_stream(body:VoiceStreamRequest):
     if sha256(reference)!=manifest['voice']['reference_sha256']:raise HTTPException(400,'参考声音校验失败')
     folder=stream_folder(ROOT,body.session_id,body.generation,body.index)
     settings=settings_of(manifest)
-    mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'])
+    mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'],
+        tone_prompt=settings['tone_prompt'])
     def produce(disconnected):
         cancelled=StreamCancellation(ROOT,body.session_id,body.generation,body.token,disconnected)
         spool=None;native=None
@@ -97,7 +101,7 @@ def tts_stream(body:VoiceStreamRequest):
                 check_space(ROOT,folder)
                 native=iter(engine.stream_synthesize(body.text,reference,body.emotion,avatar/'voice',cancelled,
                     session_id=body.session_id,token=body.token,prompt_text=prompt,mode=mode,
-                    tone=settings['tone']))
+                    tone=settings['tone'],tone_prompt=settings['tone_prompt']))
                 first=next(native)
                 spool=AudioSpool(folder,engine.voice.sample_rate)
                 yield dict(type='start',rate=engine.voice.sample_rate)
@@ -130,9 +134,10 @@ def tts(body:VoiceRequest):
             reference=source_path(folder,manifest['voice']['reference'])
             if sha256(reference)!=manifest['voice']['reference_sha256']:raise ValueError('参考声音校验失败')
             settings=settings_of(manifest)
-            mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'])
+            mode,prompt=clone_settings(body.emotion,manifest['voice'].get('text'),settings['tone'],
+                tone_prompt=settings['tone_prompt'])
             pcm,rate,report=engine.synthesize(body.text,reference,body.emotion,folder/'voice',cancelled,
-                prompt_text=prompt,mode=mode,tone=settings['tone'])
+                prompt_text=prompt,mode=mode,tone=settings['tone'],tone_prompt=settings['tone_prompt'])
             if cancelled():raise InterruptedError('当前回答已停止')
             output=io.BytesIO()
             write_wav_stream(output,pcm,rate)

@@ -15,10 +15,13 @@ so identity cannot drift.
 from __future__ import annotations
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
+
+from backend import edit_geometry, image_rules, prompting
 
 ROOT = Path(__file__).resolve().parents[1]
 SEGMENTER = 'models/outfit/clothes-seg'
@@ -224,13 +227,12 @@ def recolor(image, mask, color, strength=1., chroma=1.45, floor=32.):
     return (np.clip(mixed, 0., 1.) * 255.).round().astype(np.uint8)
 
 
-NEGATIVE = ('plaid, checkered, striped, pattern, print, sheer, translucent, transparent, '
-            'see-through, lace, satin, text, watermark, logo, extra limbs, deformed')
+NEGATIVE = prompting.BASE_NEGATIVE
 
 
-def _load_pipe(with_adapter=False):
+def _load_pipe(with_adapter=False, safety=True):
     """Load SD 1.5 inpainting once per process, optionally with IP-Adapter."""
-    key = 'pipe_adapter' if with_adapter else 'pipe'
+    key = ('pipe_adapter' if with_adapter else 'pipe') + ('' if safety else '_nosafety')
     pipe = _cache.get(key)
     if pipe is not None:
         return pipe
@@ -255,17 +257,24 @@ def _load_pipe(with_adapter=False):
     except (ValueError, OSError):
         pipe = AutoPipelineForInpainting.from_pretrained(str(folder), **kwargs)
     pipe.set_progress_bar_config(disable=True)
+    if not safety:
+        # Offline, own photos, and the preview decode bypasses the checker
+        # anyway. Dropping it frees about 600 MB of VRAM.
+        pipe.safety_checker = None
+        pipe.requires_safety_checker = False
     if with_adapter:
         # The adapter reads the reference garment through CLIP ViT-H, so the
         # prompt only describes the scene; the fabric comes from the image.
         pipe.load_ip_adapter(str(ROOT / ADAPTER), subfolder='models',
                              weight_name=ADAPTER_WEIGHT,
                              image_encoder_folder=str((ROOT / ADAPTER / 'models/image_encoder').resolve()))
+    _cache['offloaded'] = False
     if _device() == 'cuda':
         try:
             pipe.to('cuda')
         except (RuntimeError, torch.cuda.OutOfMemoryError):
             pipe.enable_model_cpu_offload()
+            _cache['offloaded'] = True
     _cache[key] = pipe
     return pipe
 
@@ -298,13 +307,14 @@ def _compose(image, mask, result):
     return (np.clip(mixed, 0., 1.) * 255.).round().astype(np.uint8)
 
 
-def inpaint(image, mask, prompt, *, steps=36, size=768, seed=0, guidance=7.5, fill=None):
+def inpaint(image, mask, prompt, *, steps=36, size=768, seed=0, guidance=7.5, fill=None,
+            negative=None):
     """Regenerate the garment from a text description."""
     import torch
     pipe = _load_pipe()
     small, mask_img = _canvas(image, mask, size, fill)
     generator = torch.Generator(device='cpu').manual_seed(int(seed))
-    result = pipe(prompt=prompt, negative_prompt=NEGATIVE, image=small,
+    result = pipe(prompt=prompt, negative_prompt=negative or NEGATIVE, image=small,
                   mask_image=mask_img, num_inference_steps=int(steps),
                   guidance_scale=float(guidance), strength=1., generator=generator).images[0]
     return _compose(image, mask, result)
@@ -318,40 +328,7 @@ def describe(text, timeout=8.):
     dialogue model is used as a tiny translator. Any failure returns an empty
     string instead of blocking the edit.
     """
-    text = (text or '').strip()
-    if not text:
-        return ''
-    if all(ord(char) < 128 for char in text):
-        return text[:80]
-    import json as _json
-    import urllib.request
-    try:
-        from backend.config import load_config
-        config = load_config(ROOT) or {}
-    except Exception:
-        config = {}
-    dialogue = config.get('dialogue') or {}
-    payload = {'model': dialogue.get('model', 'qwen2.5-3b-instruct'),
-               'messages': [
-                   {'role': 'system', 'content': '你是服装描述翻译器。把中文服装描述翻译成简短的'
-                                                 '英文名词短语，只输出英文，不要解释。'},
-                   {'role': 'user', 'content': text}],
-               'max_tokens': 32, 'temperature': 0}
-    request = urllib.request.Request(
-        dialogue.get('base_url', 'http://127.0.0.1:8081/v1') + '/chat/completions',
-        data=_json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            data = _json.load(response)
-        phrase = str(data['choices'][0]['message']['content']).strip().strip('.\"\n ')
-        import re
-        # Small models sometimes glue the words together.
-        phrase = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', phrase).lower()
-        return ' '.join(phrase.split())[:80]
-    except Exception:
-        return ''
+    return prompting.describe(text, timeout=timeout)
 
 
 def _garment_crop(garment):
@@ -379,7 +356,7 @@ def garment_fill(garment):
 
 
 def wear(image, mask, garment, prompt=None, *, steps=36, size=768, seed=0,
-         guidance=6.5, scale=.7, grow=.03):
+         guidance=6.5, scale=.7, grow=.03, negative=None):
     """Put the garment from a reference photo onto the person in ``image``.
 
     The cut comes from the person's own silhouette, the fabric and colour come
@@ -402,8 +379,8 @@ def wear(image, mask, garment, prompt=None, *, steps=36, size=768, seed=0,
     generator = torch.Generator(device='cpu').manual_seed(int(seed))
     result = pipe(prompt=prompt or ('a photo of a person wearing the garment, front view, '
                                     'natural fabric folds, studio portrait, photorealistic'),
-                  negative_prompt=('text, watermark, logo, deformed, extra limbs, low quality, '
-                                   'cartoon, illustration'),
+                  negative_prompt=negative or ('text, watermark, logo, deformed, extra limbs, '
+                                               'low quality, cartoon, illustration'),
                   image=small, mask_image=mask_img,
                   ip_adapter_image=reference, num_inference_steps=int(steps),
                   guidance_scale=float(guidance), strength=1.,
@@ -411,14 +388,349 @@ def wear(image, mask, garment, prompt=None, *, steps=36, size=768, seed=0,
     return _compose(image, mask, result)
 
 
-def run(photo, spec, out):
-    """Apply one outfit edit and write a PNG. Returns a small report."""
+# ---------------------------------------------------------------------------
+# Outpainting: extend the photo downward until the whole person is visible.
+# ---------------------------------------------------------------------------
+
+PREVIEW_KEEP = 2
+LEGS_MIN = 0.03
+
+
+class PreviewWriter:
+    """Write one intermediate picture every few diffusion steps.
+
+    Files are named by step number and never overwritten, so the reader can
+    never catch a half written PNG. The job record carries the current name and
+    a version number the UI uses to bust its cache.
+    """
+
+    def __init__(self, folder=None, job_id=None, root=None, *, interval=4, skip=2,
+                 long_edge=512, mode='decode', total=36,
+                 progress_from=.10, progress_to=.90):
+        self.folder = Path(folder) if folder else None
+        self.job_id = job_id
+        self.root = Path(root) if root else ROOT
+        self.interval = max(1, int(interval))
+        self.skip = max(0, int(skip))
+        self.long_edge = int(long_edge)
+        self.mode = (mode or 'decode').lower()
+        self.total = max(1, int(total))
+        self.progress_from = float(progress_from)
+        self.progress_to = float(progress_to)
+        self.version = 0
+        self.writes = 0
+        self.degraded = False
+        if self.folder is not None:
+            self.folder.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def enabled(self):
+        return self.folder is not None and self.mode != 'off'
+
+    def __call__(self, pipe, step_index, timestep, callback_kwargs):
+        return self.callback(pipe, step_index, timestep, callback_kwargs)
+
+    def callback(self, pipe, step_index, timestep, callback_kwargs):
+        if not self.enabled:
+            return callback_kwargs
+        step = int(step_index)
+        self._progress(step)
+        if step < self.skip or (step + 1) % self.interval:
+            return callback_kwargs
+        latents = callback_kwargs.get('latents')
+        if latents is None:
+            return callback_kwargs
+        picture = None
+        if self.mode == 'decode' and not _cache.get('offloaded'):
+            try:
+                picture = self._decode(pipe, latents)
+            except Exception:
+                self.degraded = True
+        if picture is None:
+            try:
+                picture = self._latent(latents)
+            except Exception:
+                return callback_kwargs
+        try:
+            self.write(step, picture)
+        except OSError:
+            pass
+        return callback_kwargs
+
+    def _decode(self, pipe, latents):
+        import torch
+        with torch.no_grad():
+            image = pipe.vae.decode(
+                latents / pipe.vae.config.scaling_factor, return_dict=False)[0]
+        return pipe.image_processor.postprocess(image, output_type='pil')[0]
+
+    def _latent(self, latents):
+        """Cheap fallback: project the first three channels. Layout only."""
+        from PIL import Image
+        data = latents[0, :3]
+        if hasattr(data, 'float'):
+            data = data.float() / .18215
+            data = data - data.min()
+            data = data / (data.max() + 1e-6)
+            array = data.permute(1, 2, 0).cpu().numpy()
+        else:
+            data = np.asarray(data, np.float32) / .18215
+            data = data - data.min()
+            data = data / (data.max() + 1e-6)
+            array = np.transpose(data, (1, 2, 0))
+        return Image.fromarray((array * 255).astype(np.uint8)).resize(
+            (max(8, array.shape[1] * 8), max(8, array.shape[0] * 8)), Image.NEAREST)
+
+    def _progress(self, step):
+        share = (step + 1) / float(self.total)
+        value = self.progress_from + (self.progress_to - self.progress_from) * share
+        self._update(stage='diffuse',
+                     progress=round(min(self.progress_to, max(0., value)), 3))
+
+    def _update(self, **fields):
+        if not self.job_id:
+            return
+        try:
+            from backend.storage import Store
+            Store(self.root).update_job(self.job_id, **fields)
+        except (OSError, ValueError, KeyError):
+            pass
+
+    def write(self, step, image):
+        from PIL import Image
+        width, height = image.size
+        if max(width, height) > self.long_edge:
+            scale = self.long_edge / float(max(width, height))
+            image = image.resize((max(1, round(width * scale)), max(1, round(height * scale))),
+                                 Image.LANCZOS)
+        name = f'step-{int(step):04d}.png'
+        target = self.folder / name
+        temporary = target.with_suffix('.tmp')
+        image.convert('RGB').save(temporary, format='PNG')
+        os.replace(temporary, target)
+        self.version += 1
+        self.writes += 1
+        files = sorted(self.folder.glob('step-*.png'))
+        for stale in files[:-PREVIEW_KEEP]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        self._update(preview={'version': self.version, 'step': int(step),
+                              'steps': self.total, 'file': name,
+                              'long_edge': self.long_edge, 'mode': self.mode})
+
+
+def _resize_pair(canvas, mask, size):
     from PIL import Image
-    image = Image.open(photo).convert('RGB')
+    width, height = size
+    small = Image.fromarray(np.asarray(canvas, np.uint8)).resize((width, height), Image.LANCZOS)
+    mask_img = Image.fromarray((np.clip(mask, 0., 1.) * 255).astype(np.uint8)).resize(
+        (width, height), Image.LANCZOS)
+    return small, np.asarray(mask_img, np.float32) / 255.
+
+
+def _upper_body(image, labels):
+    """Tight crop of the visible torso, used as the adapter reference.
+
+    A high adapter scale would copy this clothing into the generated legs, so
+    the caller keeps the scale low. The crop still carries skin tone, lighting
+    and fabric texture across the seam.
+    """
+    zone = edit_geometry.labels_of((4, 7, 11, 14, 15), labels)
+    if not zone.any():
+        return image
+    rows = np.nonzero(zone.any(axis=1))[0]
+    cols = np.nonzero(zone.any(axis=0))[0]
+    if not rows.size or not cols.size:
+        return image
+    width, height = image.size
+    pad_y = int((rows[-1] - rows[0]) * .08) + 4
+    pad_x = int((cols[-1] - cols[0]) * .08) + 4
+    box = (max(0, int(cols[0]) - pad_x), max(0, int(rows[0]) - pad_y),
+           min(width, int(cols[-1]) + pad_x), min(height, int(rows[-1]) + pad_y))
+    return image.crop(box)
+
+
+def _quality(legs, capped=False):
+    """Gate on what can actually be measured.
+
+    A cross seam colour step is not a defect: a black top over light trousers
+    legitimately changes colour at the hem, so colour is not used here. What
+    can be measured is whether legs exist at all, and whether the request had
+    to be capped into a three-quarter shot.
+    """
+    if legs < LEGS_MIN:
+        return 'low'
+    return 'fair' if capped else 'good'
+
+
+def extend(photo, spec, out):
+    """Extend one photo into a taller, fuller shot. Returns a report dict.
+
+    Two passes are used when the target is taller than SD 1.5 handles well in
+    one go. The second pass re-segments the intermediate, so its body estimate
+    includes the legs the first pass just drew.
+    """
+    from PIL import Image
+    source = photo if isinstance(photo, Image.Image) else image_rules.open_normalized(photo)
+    target = float(spec.get('aspect', .75))
+    limit = float(spec.get('max_ratio_per_pass', 1.55))
+    ratios = [target]
+    if 1. / target > limit and int(spec.get('passes', 2)) > 1:
+        ratios = [1. / limit, target]
+
+    writer = spec.get('_writer')
+    current = source
+    last = None
+    for index, aspect in enumerate(ratios):
+        final = index == len(ratios) - 1
+        current, last = _extend_once(current, spec, aspect,
+                                     writer=writer if final or len(ratios) == 1 else None)
+        if last.get('skipped'):
+            break
+    if last.get('skipped'):
+        return {'mode': 'extend', 'skipped': last['skipped'],
+                'label': spec.get('label') or '全身·已完整',
+                'canvas': list(current.size), 'size': list(current.size),
+                'passes': len(ratios), 'quality': 'good', 'output': None}
+
+    rgb, scale = edit_geometry.fit_output(np.asarray(current), int(spec.get('output_edge', 1536)))
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgb).save(out, format='PNG')
+    last.update({'mode': 'extend', 'output': str(out), 'size': list(current.size),
+                 'output_scale': round(scale, 3), 'passes': len(ratios),
+                 'label': spec.get('label') or '全身'})
+    return last
+
+
+def _extend_once(image, spec, aspect, writer=None):
+    from PIL import Image
+
+    labels = label_map(image)
+    box = edit_geometry.person_bbox(labels)
+    head = edit_geometry.head_height(labels, box)
+    plan = edit_geometry.plan_canvas(
+        image.width, image.height, box, head, aspect=aspect,
+        headroom=float(spec.get('headroom', .05)),
+        min_gain=float(spec.get('min_gain', .06)),
+        max_gain=float(spec.get('max_gain', 2.2)))
+    if plan['skipped']:
+        return image, {'skipped': plan['skipped'], 'plan': plan}
+
+    person = edit_geometry.labels_of(edit_geometry.PERSON_LABELS, labels)
+    protected = edit_geometry.protect_mask(plan['canvas'], plan['offset'], labels)
+    mask, _ = edit_geometry.build_mask(plan['canvas'], plan['offset'], box,
+                                       plan['source'], protected=protected)
+    colors = edit_geometry.body_prior(labels, image)
+    seed = int(spec.get('seed', 0))
+    canvas, mask = edit_geometry.fill_canvas(image, plan, mask, colors,
+                                             body_prior_fill=bool(spec.get('body_prior', True)),
+                                             seed=seed)
+
+    action = prompting.translate_cached(spec.get('action'), 'action')
+    tone = prompting.translate_cached(spec.get('tone'), 'tone')
+    expression = prompting.translate_cached(spec.get('expression'), 'expression')
+    positive, negative = prompting.extend_prompt(
+        action=action, tone=tone, expression=expression,
+        garment=prompting.garment_hint(labels, image))
+
+    scale = float(spec.get('scale', .35))
+    try:
+        pipe = _load_pipe(with_adapter=True, safety=False)
+        reference = _upper_body(image, labels)
+        adapted = True
+    except FileNotFoundError:
+        pipe = _load_pipe(with_adapter=False, safety=False)
+        reference = None
+        adapted = False
+    if adapted:
+        # The pipe is process cached; the scale is stateful on it.
+        pipe.set_ip_adapter_scale(scale)
+
+    steps = int(spec.get('steps', 36))
+    work = edit_geometry.preview_size(plan, int(spec.get('working_edge', 768)))
+    degraded = False
+    legs = 0.
+    result = None
+    for attempt in range(2):
+        canvas_small, mask_small = _resize_pair(canvas, mask, work)
+        if writer is not None:
+            writer.total = steps
+        try:
+            result = _render(pipe, canvas_small, mask_small, reference, positive,
+                             negative, steps, spec, seed + attempt, writer)
+        except Exception as error:  # noqa: BLE001 - only OOM is retried
+            if 'out of memory' not in str(error).lower() or attempt:
+                raise
+            degraded = True
+            _free_memory()
+            work = (max(256, work[0] * 2 // 3 // 8 * 8), max(256, work[1] * 2 // 3 // 8 * 8))
+            steps = max(20, steps * 2 // 3)
+            continue
+        small_plan = edit_geometry.scale_plan(plan, result.size)
+        legs = edit_geometry.leg_ratio(label_map(result), small_plan)
+        if legs >= LEGS_MIN or attempt:
+            break
+        # No legs usually means the model stopped at the hip. One retry with a
+        # different seed and an explicit cue is cheaper than failing the edit.
+        positive = positive + ', both feet visible, standing on the floor'
+
+    native = result.resize((plan['canvas'][0], plan['canvas'][1]), Image.LANCZOS)
+    out = edit_geometry.compose_extend(canvas, mask, np.asarray(native))
+    identity = edit_geometry.check_identity(np.asarray(image), out, plan, labels)
+    quality = _quality(legs, bool(plan.get('capped')))
+    report = {'plan': plan, 'face_diff_ratio': identity['face_diff_ratio'],
+              'protected_diff_ratio': identity['protected_diff_ratio'],
+              'leg_ratio': round(float(legs), 3),
+              'quality': quality, 'adapter': adapted, 'degraded': degraded,
+              'canvas': plan['canvas'], 'gain': round(plan['gain'], 1),
+              'capped': bool(plan.get('capped')), 'prompt': positive}
+    if quality == 'low':
+        report['warnings'] = ['没有检测到完整的腿部，建议换一张照片或重试']
+    elif plan.get('capped'):
+        report['warnings'] = ['照片里的人物偏大，这次只扩到七分身']
+    return Image.fromarray(out), report
+
+
+def _free_memory():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _render(pipe, canvas, mask, reference, positive, negative, steps, spec, seed, writer):
+    import torch
+    from PIL import Image
+    kwargs = {'prompt': positive, 'negative_prompt': negative,
+              'image': canvas,
+              'mask_image': Image.fromarray((np.clip(mask, 0., 1.) * 255).astype(np.uint8)),
+              'num_inference_steps': int(steps),
+              'guidance_scale': float(spec.get('guidance', 6.5)),
+              'strength': 1.,
+              'generator': torch.Generator(device='cpu').manual_seed(int(seed))}
+    if reference is not None:
+        kwargs['ip_adapter_image'] = reference
+    if writer is not None and writer.enabled:
+        kwargs['callback_on_step_end'] = writer.callback
+        kwargs['callback_on_step_end_tensor_inputs'] = ['latents']
+    return pipe(**kwargs).images[0]
+
+
+def run(photo, spec, out):
+    """Apply one edit and write a PNG. Returns a small report."""
+    from PIL import Image
+    mode = spec.get('mode', 'recolor')
+    if mode == 'extend':
+        return extend(photo, spec, out)
+    image = image_rules.open_normalized(photo)
     labels = label_map(image)
     parts = UPPER_LABELS if spec.get('scope', 'upper') != 'full' else UPPER_LABELS + LOWER_LABELS
     mask = garment_mask(labels, image, parts)
-    mode = spec.get('mode', 'recolor')
     if mode == 'recolor':
         rgb = recolor(image, mask, _color_hex(spec), float(spec.get('strength', 1.)))
     elif mode == 'generate':
@@ -430,13 +742,17 @@ def run(photo, spec, out):
         garment = spec.get('garment')
         if not garment:
             raise ValueError('缺少衣服图片')
-        phrase = describe(spec.get('describe'))
-        prompt = (f'a photo of a person wearing a {phrase}, front view, natural folds, '
-                  'studio portrait, photorealistic') if phrase else spec.get('prompt')
+        phrase = prompting.translate_cached(spec.get('describe'))
+        # A Chinese prompt reaches SD 1.5 as noise. Use it only when it is the
+        # English phrase the caller already translated.
+        given = (spec.get('prompt') or '').strip()
+        prompt = given if given and all(ord(char) < 128 for char in given) else \
+            prompting.wear_prompt(garment=phrase)[0]
         rgb = wear(image, mask, garment, prompt,
                    steps=int(spec.get('steps', 36)), size=int(spec.get('size', 768)),
                    seed=int(spec.get('seed', 0)), guidance=float(spec.get('guidance', 6.5)),
-                   scale=float(spec.get('scale', .85)))
+                   scale=float(spec.get('scale', .85)),
+                   negative=prompting.EXTEND_NEGATIVE)
     else:
         raise ValueError(f'未知的换装方式：{mode}')
     out = Path(out)
@@ -451,18 +767,55 @@ def run(photo, spec, out):
             'size': list(image.size)}
 
 
+def analyze(photo):
+    """Read the person geometry once, so the UI can preview a plan without torch."""
+    image = image_rules.open_normalized(photo)
+    labels = label_map(image)
+    box = edit_geometry.person_bbox(labels)
+    head = edit_geometry.head_height(labels, box)
+    colors = edit_geometry.body_prior(labels, image)
+    return {'size': [image.width, image.height], 'box': [int(value) for value in box],
+            'head': round(float(head), 2),
+            'colors': {name: [round(float(value), 1) for value in values]
+                       for name, values in colors.items()}}
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='给照片里的人物换装')
+    parser = argparse.ArgumentParser(description='给照片里的人物换装，或把照片扩成全身照')
     parser.add_argument('--photo', required=True)
-    parser.add_argument('--out', required=True)
+    parser.add_argument('--out', help='结果图片路径')
     parser.add_argument('--garment', help='衣服图片路径（mode=wear 时必填）')
     parser.add_argument('--spec', default='{}', help='JSON: mode/color/strength/prompt/scope')
     parser.add_argument('--spec-file')
+    parser.add_argument('--job-id', help='任务编号，用于写进度与中间图')
+    parser.add_argument('--preview-dir', help='中间图目录，默认 work/previews/<job-id>')
+    parser.add_argument('--analyze', action='store_true', help='只输出人物几何，不生成图片')
     options = parser.parse_args(argv)
+    if options.analyze:
+        try:
+            print(json.dumps(analyze(options.photo), ensure_ascii=False))
+        except (ValueError, FileNotFoundError) as error:
+            print(json.dumps({'error': str(error)}, ensure_ascii=False))
+            return 2
+        return 0
+    if not options.out:
+        parser.error('--out 是必需的（--analyze 除外）')
     spec = json.loads(Path(options.spec_file).read_text(encoding='utf-8')
                       if options.spec_file else options.spec)
     if options.garment:
         spec['garment'] = options.garment
+    if options.job_id and spec.get('mode') == 'extend':
+        # Objects cannot travel through --spec, so the writer is built here.
+        root = Path(os.environ.get('DIGITAL_HUMAN_ROOT') or ROOT)
+        preview = spec.get('preview') or {}
+        folder = Path(options.preview_dir) if options.preview_dir else \
+            root / 'work/previews' / options.job_id
+        spec['_writer'] = PreviewWriter(
+            folder, job_id=options.job_id, root=root,
+            interval=preview.get('steps_interval', preview.get('interval', 4)),
+            skip=preview.get('skip_steps', preview.get('skip', 2)),
+            long_edge=preview.get('long_edge', 512), mode=preview.get('mode', 'decode'),
+            total=int(spec.get('steps', 36)))
     try:
         report = run(options.photo, spec, options.out)
     except (ValueError, FileNotFoundError) as error:
