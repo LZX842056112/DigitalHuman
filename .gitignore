@@ -12,6 +12,7 @@ outputs/*
 !outputs/.gitkeep
 work/
 .superpowers/
+.workbuddy/
 __pycache__/
 *.egg-info/
 frontend/node_modules/
